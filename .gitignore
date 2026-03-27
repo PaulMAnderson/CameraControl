@@ -1,0 +1,4 @@
+camera_capture.log
+__pycache__/
+*.pyc
+.DS_Store

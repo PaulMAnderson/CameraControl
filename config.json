@@ -1,0 +1,46 @@
+{
+    "_comment": "Camera capture config - edit once per machine/rig. Do not rename keys.",
+
+    "rig": {
+        "room":   "Juxta 2",
+        "rig_id": "Neuropixels 2.0"
+    },
+
+    "paths": {
+        "save_folder": "D:\\Video",
+        "ffmpeg_path":  "C:/FFmpeg/bin"
+    },
+
+    "hardware": {
+        "arduino_port":      "COM3",
+        "open_ephys_host":   "localhost",
+        "open_ephys_port":   37497,
+        "open_ephys_poll_interval_ms": 500
+    },
+
+    "camera": {
+        "exposure_us":   1000,
+        "gain_db":       22,
+        "gamma":         0.5,
+        "width":         720,
+        "height":        540,
+        "buffer_count":  200,
+        "buffer_mode":   "OldestFirst",
+        "triggered_fps": 400,
+        "cam_timeout_ms": 3000
+    },
+
+    "encoding": {
+        "_comment_codec": "hevc_qsv=Intel, hevc_nvenc=Nvidia, hevc_amf=AMD, libx265=CPU fallback",
+        "codec":      "hevc_qsv",
+        "codec_tag":  "hvc1",
+        "preset":     "fast",
+        "extra_output_flags": {}
+    },
+
+    "gui": {
+        "preview_fps":        15,
+        "default_mode":       "triggered",
+        "free_record_fps_options": [25, 50, 100, 200, 400]
+    }
+}
