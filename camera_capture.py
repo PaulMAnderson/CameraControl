@@ -592,19 +592,60 @@ class CameraApp:
         self._begin_recording()
 
     def _oe_record_stopped(self):
-        """Open Ephys just stopped recording - stop triggered capture."""
-        if self.mode != CaptureMode.TRIGGERED:
-            return
+        """Open Ephys just stopped recording.
+        Intentional no-op: Python is OE's master.
+        The video continues until the last active source (Matlab or button) stops.
+        Python sends the STOP command to OE in _finish_worker after the writer closes.
+        """
+        pass
+
+    # --------------------------------------------------- OR Logic trigger routing
+    def _trigger_start(self, source: str):
+        """Register a source requesting recording start.
+        Starts recording on first call; subsequent calls from other sources just
+        add to _active_sources without restarting.
+        Only applies in TRIGGERED mode when IDLE or ARMED.
+        """
+        self._active_sources.add(source)
+        if self.state in (AppState.IDLE, AppState.ARMED):
+            self._begin_recording()
+
+    def _trigger_stop(self, source: str):
+        """Register a source releasing its recording request.
+        Recording stops only when _active_sources becomes empty.
+        OE is intentionally never passed here — Python is OE's master.
+        """
+        self._active_sources.discard(source)
+        if self._active_sources:
+            return   # other sources still active, keep recording
         if self.state == AppState.RECORDING:
+            self.sync.cmd_recording_ending()
             self._end_recording()
 
-    # --------------------------------------------------- Arduino and Matlab callbacks
     def _on_arduino_event(self, event: str):
         """Handle EVENT: strings from the Arduino SerialReaderThread.
         Called on the tkinter main thread via sync._fire().
-        Placeholder for Task 3 implementation.
         """
-        pass
+        if event == 'CAM_BUTTON':
+            if self.state == AppState.ARMED:
+                self._trigger_start('button')
+            elif self.state == AppState.RECORDING:
+                self._trigger_stop('button')
+        elif event == 'BARCODE_BUTTON':
+            self._toggle_barcodes()
+        else:
+            print(f"_on_arduino_event: unknown event ignored: {event!r}")
+
+    def _toggle_barcodes(self):
+        """Toggle barcode pulses on/off independent of video capture (AC3.3)."""
+        if self._barcodes_running:
+            self.sync.cmd_stop_barcodes()
+            self._barcodes_running = False
+        else:
+            self.sync.cmd_start_barcodes()
+            self._barcodes_running = True
+
+    # --------------------------------------------------- Arduino and Matlab callbacks
 
     def _matlab_started(self):
         """Matlab sent a UDP 'START' — request recording start (TRIGGERED mode only).
