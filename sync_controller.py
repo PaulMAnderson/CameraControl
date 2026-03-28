@@ -7,6 +7,7 @@ import threading
 import time
 import serial
 import serial.tools.list_ports
+import socket
 
 try:
     import urllib.request
@@ -39,6 +40,12 @@ class SyncController:
         self._serial_thread = None
         self._serial_stop   = threading.Event()
         self._on_arduino_event = None
+
+        self._udp_thread      = None
+        self._udp_stop        = threading.Event()
+        self._udp_sock        = None   # kept as instance var so stop_udp_listener can close it
+        self._on_matlab_start = None
+        self._on_matlab_stop  = None
 
         self._oe_thread  = None
         self._oe_stop    = threading.Event()
@@ -117,6 +124,49 @@ class SyncController:
                 self._serial_ok = False
                 self._fire_status()
                 break
+
+    def start_udp_listener(self, on_matlab_start=None, on_matlab_stop=None):
+        """Start background thread listening for Matlab UDP triggers.
+        Binds to 0.0.0.0:{matlab_udp_port} (from config.json hardware section).
+        on_matlab_start() — called when 'START' datagram received.
+        on_matlab_stop()  — called when 'STOP' datagram received.
+        """
+        self._on_matlab_start = on_matlab_start
+        self._on_matlab_stop  = on_matlab_stop
+        self._udp_stop.clear()
+        self._udp_thread = threading.Thread(
+            target=self._udp_listener_loop, daemon=True, name="UDPListenerThread"
+        )
+        self._udp_thread.start()
+
+    def stop_udp_listener(self):
+        self._udp_stop.set()
+        if self._udp_sock:
+            try:
+                self._udp_sock.close()   # unblocks recvfrom immediately
+            except Exception:
+                pass
+        if self._udp_thread:
+            self._udp_thread.join(timeout=3.0)
+
+    def _udp_listener_loop(self):
+        port = self._cfg['hardware']['matlab_udp_port']
+        self._udp_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self._udp_sock.settimeout(1.0)
+        try:
+            self._udp_sock.bind(('', port))
+            while not self._udp_stop.is_set():
+                try:
+                    data, _ = self._udp_sock.recvfrom(1024)
+                    msg = data.decode('utf-8', errors='ignore').strip()
+                    if msg == 'START':
+                        self._fire(self._on_matlab_start)
+                    elif msg == 'STOP':
+                        self._fire(self._on_matlab_stop)
+                except (socket.timeout, OSError):
+                    continue
+        finally:
+            self._udp_sock = None
 
     def _send(self, cmd: bytes):
         """Send a single command byte. Silently ignores if not connected."""
