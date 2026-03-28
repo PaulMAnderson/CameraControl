@@ -229,10 +229,7 @@ void updateCamButton() {
        ((currentMillis - previousCamActivation)   >= camButtonReactivate) ) {
     camButtonState = digitalRead(camButtonPin);
     if (camButtonState == LOW) {
-      Serial.println("Cam Button pressed.");
-      runCam          = !runCam;
-      camStartPending = false; // manual button overrides any pending state
-      Serial.println(runCam ? "Starting Camera TTL Pulses..." : "Stopping Camera TTL Pulses...");
+      Serial.println("EVENT:CAM_BUTTON");
       previousCamActivation = currentMillis;
     }
     previousCamButton = currentMillis;
