@@ -579,17 +579,13 @@ class CameraApp:
         if state == 'UNREACHABLE':
             self._ard_label.config(text="Open Ephys: Not reachable")
 
-        # In triggered mode, ARMED state means we're waiting for OE to start
-        if self.state == AppState.ARMED and state == 'RECORD':
-            self._oe_record_started()
-
     def _oe_record_started(self):
-        """Open Ephys just started recording - begin triggered capture."""
+        """Open Ephys just started recording — trigger capture if in TRIGGERED mode."""
         if self.mode != CaptureMode.TRIGGERED:
             return
         if self.state not in (AppState.IDLE, AppState.ARMED):
             return
-        self._begin_recording()
+        self._trigger_start('oe')
 
     def _oe_record_stopped(self):
         """Open Ephys just stopped recording.
@@ -648,16 +644,14 @@ class CameraApp:
     # --------------------------------------------------- Arduino and Matlab callbacks
 
     def _matlab_started(self):
-        """Matlab sent a UDP 'START' — request recording start (TRIGGERED mode only).
-        Placeholder for Task 4 implementation.
-        """
-        pass
+        """Matlab sent a UDP 'START' — request recording start (TRIGGERED mode only)."""
+        if self.mode != CaptureMode.TRIGGERED:
+            return
+        self._trigger_start('matlab')
 
     def _matlab_stopped(self):
-        """Matlab sent a UDP 'STOP' — release matlab's recording request.
-        Placeholder for Task 4 implementation.
-        """
-        pass
+        """Matlab sent a UDP 'STOP' — release matlab's recording request."""
+        self._trigger_stop('matlab')
 
     # --------------------------------------------------- record / stop buttons
     def _on_record(self):
@@ -689,9 +683,10 @@ class CameraApp:
             self._begin_recording()
 
     def _on_stop(self):
+        self._active_sources.clear()   # manual override: cancel all external requests
         if self.state == AppState.ARMED:
-            # Disarm without having recorded anything
             self.sync.cmd_recording_ending()
+            self._barcodes_running = False
             self.state = AppState.IDLE
             self._set_state_label("● IDLE", 'grey')
             self.record_btn.config(state='normal')
@@ -703,6 +698,7 @@ class CameraApp:
                 self.sync.cmd_stop_cam_free()
             elif self.mode == CaptureMode.TRIGGERED:
                 self.sync.cmd_recording_ending()
+                self._barcodes_running = False   # 'X' stops barcodes on Arduino
             self._end_recording()
 
     # --------------------------------------------------- recording lifecycle
