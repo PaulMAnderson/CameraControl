@@ -576,9 +576,6 @@ class CameraApp:
         self._oe_dot.config(fg=col)
         self._oe_label.config(text=f"Open Ephys: {state}")
 
-        if state == 'UNREACHABLE':
-            self._ard_label.config(text="Open Ephys: Not reachable")
-
     def _oe_record_started(self):
         """Open Ephys just started recording — trigger capture if in TRIGGERED mode."""
         if self.mode != CaptureMode.TRIGGERED:
@@ -600,7 +597,9 @@ class CameraApp:
         """Register a source requesting recording start.
         Starts recording on first call; subsequent calls from other sources just
         add to _active_sources without restarting.
-        Only applies in TRIGGERED mode when IDLE or ARMED.
+
+        Callers must gate on TRIGGERED mode before calling this method.
+        The method applies when state is IDLE or ARMED.
         """
         self._active_sources.add(source)
         if self.state in (AppState.IDLE, AppState.ARMED):
@@ -651,6 +650,8 @@ class CameraApp:
 
     def _matlab_stopped(self):
         """Matlab sent a UDP 'STOP' — release matlab's recording request."""
+        if self.mode != CaptureMode.TRIGGERED:
+            return
         self._trigger_stop('matlab')
 
     # --------------------------------------------------- record / stop buttons
@@ -686,7 +687,7 @@ class CameraApp:
         self._active_sources.clear()   # manual override: cancel all external requests
         if self.state == AppState.ARMED:
             self.sync.cmd_recording_ending()
-            self._barcodes_running = False
+            # _recording_finished handles barcode state reset
             self.state = AppState.IDLE
             self._set_state_label("● IDLE", 'grey')
             self.record_btn.config(state='normal')
@@ -698,7 +699,7 @@ class CameraApp:
                 self.sync.cmd_stop_cam_free()
             elif self.mode == CaptureMode.TRIGGERED:
                 self.sync.cmd_recording_ending()
-                self._barcodes_running = False   # 'X' stops barcodes on Arduino
+                # _recording_finished handles barcode state reset
             self._end_recording()
 
     # --------------------------------------------------- recording lifecycle
@@ -817,6 +818,7 @@ class CameraApp:
         self.root.after(0, self._recording_finished)
 
     def _recording_finished(self):
+        self._active_sources.clear()      # Clear stale sources when recording ends
         self._barcodes_running = False   # 'X' command stops barcodes on recording end
         self.state = AppState.IDLE
         self._set_state_label("● IDLE", 'grey')
