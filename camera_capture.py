@@ -804,6 +804,10 @@ class CameraApp:
         )
         write_metadata(self._filepath, meta)
 
+        # Tell Open Ephys to stop recording — Python is master, OE is slave (AC2.1)
+        # Called after writer closes so the ephys file captures the final barcode
+        self.sync.cmd_stop_oe_recording()
+
         # Restart preview-only capture (init_cam called inside _start_preview_capture)
         print("_finish_worker: restarting preview capture...")
         self._start_preview_capture()
@@ -813,6 +817,7 @@ class CameraApp:
         self.root.after(0, self._recording_finished)
 
     def _recording_finished(self):
+        self._barcodes_running = False   # 'X' command stops barcodes on recording end
         self.state = AppState.IDLE
         self._set_state_label("● IDLE", 'grey')
         self.record_btn.config(state='normal')
