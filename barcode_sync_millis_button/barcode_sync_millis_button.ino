@@ -217,9 +217,7 @@ void updateBarcodeButton() {
        ((currentMillis - previousBarcodeActivation) >= barcodeButtonReactivate) ) {
     barcodeButtonState = digitalRead(barcodeButtonPin);
     if (barcodeButtonState == LOW) {
-      Serial.println("Barcode Button pressed.");
-      runBarcode = !runBarcode;
-      Serial.println(runBarcode ? "Starting Barcode TTL Pulses..." : "Stopping Barcode TTL Pulses...");
+      Serial.println("EVENT:BARCODE_BUTTON");
       previousBarcodeActivation = currentMillis;
     }
     previousBarcodeButton = currentMillis;
