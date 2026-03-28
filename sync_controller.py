@@ -36,6 +36,10 @@ class SyncController:
         self._serial     = None
         self._serial_ok  = False
 
+        self._serial_thread = None
+        self._serial_stop   = threading.Event()
+        self._on_arduino_event = None
+
         self._oe_thread  = None
         self._oe_stop    = threading.Event()
         self._oe_state   = None          # last known OE state string
@@ -67,6 +71,7 @@ class SyncController:
 
     def disconnect_arduino(self):
         """Send stop-all before closing so pins go low."""
+        self.stop_serial_reader()
         if self._serial and self._serial.is_open:
             try:
                 self._serial.write(b'S')
@@ -75,6 +80,43 @@ class SyncController:
             except Exception:
                 pass
         self._serial_ok = False
+
+    def start_serial_reader(self, on_arduino_event=None):
+        """Start background thread reading EVENT: lines from Arduino.
+        Call this after connect_arduino() succeeds.
+        on_arduino_event(event: str) — called with the event name, e.g. 'BARCODE_BUTTON'.
+
+        WARNING: Once this thread is running, do NOT call query_status() — both
+        methods read from the same serial port and will race. The startup handshake
+        in connect_arduino() sends '?' and reads the STATUS response *before* this
+        thread is started, so the normal call sequence is safe.
+        """
+        self._on_arduino_event = on_arduino_event
+        self._serial_stop.clear()
+        self._serial_thread = threading.Thread(
+            target=self._serial_reader_loop, daemon=True, name="SerialReaderThread"
+        )
+        self._serial_thread.start()
+
+    def stop_serial_reader(self):
+        self._serial_stop.set()
+        if self._serial_thread:
+            self._serial_thread.join(timeout=3.0)
+
+    def _serial_reader_loop(self):
+        while not self._serial_stop.is_set():
+            if not (self._serial_ok and self._serial and self._serial.is_open):
+                self._serial_stop.wait(0.1)
+                continue
+            try:
+                line = self._serial.readline().decode('utf-8', errors='ignore').strip()
+                if line.startswith('EVENT:'):
+                    event = line[6:]   # e.g. 'BARCODE_BUTTON'
+                    self._fire(self._on_arduino_event, event)
+            except serial.SerialException:
+                self._serial_ok = False
+                self._fire_status()
+                break
 
     def _send(self, cmd: bytes):
         """Send a single command byte. Silently ignores if not connected."""
