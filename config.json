@@ -15,7 +15,8 @@
         "arduino_port":      "COM3",
         "open_ephys_host":   "localhost",
         "open_ephys_port":   37497,
-        "open_ephys_poll_interval_ms": 500
+        "open_ephys_poll_interval_ms": 500,
+        "matlab_udp_port":   5005
     },
 
     "camera": {
