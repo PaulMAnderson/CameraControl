@@ -687,7 +687,7 @@ class CameraApp:
         self._active_sources.clear()   # manual override: cancel all external requests
         if self.state == AppState.ARMED:
             self.sync.cmd_recording_ending()
-            # _recording_finished handles barcode state reset
+            # _barcodes_running is not set during ARMED, no reset needed here
             self.state = AppState.IDLE
             self._set_state_label("● IDLE", 'grey')
             self.record_btn.config(state='normal')
@@ -699,7 +699,7 @@ class CameraApp:
                 self.sync.cmd_stop_cam_free()
             elif self.mode == CaptureMode.TRIGGERED:
                 self.sync.cmd_recording_ending()
-                # _recording_finished handles barcode state reset
+                # _recording_finished resets _barcodes_running after writer closes
             self._end_recording()
 
     # --------------------------------------------------- recording lifecycle

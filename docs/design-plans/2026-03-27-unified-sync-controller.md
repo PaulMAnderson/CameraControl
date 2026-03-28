@@ -104,65 +104,67 @@ This design follows and extends the existing pattern found in `sync_controller.p
 
 ## 🟡 Implementation Phases
 
+> **Implementation status note (2026-03-28):** Phases 4 and 5 are already implemented in the current codebase. Phase 1 is partially done. Phases 2 and 3 are the primary remaining work.
+
 <!-- START_PHASE_1 -->
 ### Phase 1: Robust Arduino Firmware
 **Goal:** Harden the Arduino code for reliable, low-latency sync.
 
 **Components:**
-- `barcode_sync_millis_button/barcode_sync_millis_button.ino`: Modify to report dual button presses via Serial and default all pins to LOW.
+- `barcode_sync_millis_button/barcode_sync_millis_button.ino`: Modify button handlers to report button presses via Serial `EVENT:` strings instead of directly toggling pins.
+
+**Current state:** All serial commands (`R/X/C/E/A/S/B/D/?`) are implemented. All pins default to LOW on startup. The `?` status query and `printStatus()` are implemented. **Remaining gap:** `updateBarcodeButton()` and `updateCamButton()` still directly toggle `runBarcode`/`runCam` instead of emitting `EVENT:BARCODE_BUTTON` / `EVENT:CAM_BUTTON` serial strings — Python cannot intercept button presses.
 
 **Dependencies:** None
 
-**Done when:** Arduino serial output shows `EVENT` strings on button press and `ACK` on commands; all pins are LOW on boot.
+**Done when:** Arduino serial output shows `EVENT:BARCODE_BUTTON` and `EVENT:CAM_BUTTON` strings on button press; buttons no longer directly toggle pins (Python is the decision-maker).
 <!-- END_PHASE_1 -->
 
 <!-- START_PHASE_2 -->
 ### Phase 2: Unified SyncController (I/O Layer)
-**Goal:** Build the background communication threads.
+**Goal:** Build the remaining background communication threads.
 
 **Components:**
-- `sync_controller.py`: Implement `SerialReaderThread`, `UDPListenerThread`, and `OEPollThread`.
-- `config.json`: Add network and port configurations.
+- `sync_controller.py`: Add `SerialReaderThread` (reads incoming EVENT messages from Arduino) and `UDPListenerThread` (Port 5005, receives Matlab triggers). The `OEPollThread` is already implemented.
+- `config.json`: Add `matlab_udp_port` (default 5005) to the `hardware` section.
+
+**Current state:** OE polling thread is done. Serial send commands are done. Serial *reading* (EVENT messages from Arduino) and UDP listener are missing. `config.json` has no `matlab_udp_port` key.
 
 **Dependencies:** Phase 1
 
-**Done when:** `SyncController` correctly logs "START" signals from all three sources (Matlab UDP, OE HTTP, Arduino Serial).
+**Done when:** `SyncController` correctly fires callbacks for "START" signals from all three sources (Matlab UDP, OE HTTP, Arduino Serial button events).
 <!-- END_PHASE_2 -->
 
 <!-- START_PHASE_3 -->
 ### Phase 3: Core State Machine & Trigger Logic
-**Goal:** Implement the "OR Logic" and hardware arming.
+**Goal:** Implement multi-source "OR Logic", route all trigger sources, and send OE STOP.
 
 **Components:**
-- `camera_capture.py`: Refactor `_begin_recording` and `_stop_recording` to be state-aware and handle multiple trigger sources.
+- `camera_capture.py`: Add `_active_sources` set to track which sources are currently active. Route `EVENT:CAM_BUTTON` from Arduino and Matlab UDP signals to `_begin_recording` / `_end_recording`. Add OE HTTP STOP command after video finishes (AC2.1).
+
+**Current state:** Single-source OE-triggered recording is implemented (`_oe_record_started` / `_oe_record_stopped` callbacks work). OR Logic (multi-source set), Matlab UDP routing, Arduino button routing, and OE STOP command are all missing.
 
 **Dependencies:** Phase 2
 
-**Done when:** The first enabled trigger source starts the camera writer and sends `'R'` to the Arduino.
+**Done when:** Any enabled trigger source starts recording; the last source to stop ends it; Python sends HTTP STOP to Open Ephys after the video writer closes.
 <!-- END_PHASE_3 -->
 
 <!-- START_PHASE_4 -->
 ### Phase 4: Metadata & Fail-Safe Logging
 **Goal:** Ensure every recording is documented, even on crash.
 
-**Components:**
-- `camera_capture.py`: Implement the `.json` stub writing and final update logic.
+**Status: COMPLETE** — `make_metadata_stub`, `finalise_metadata`, and `write_metadata` are implemented in `camera_capture.py` and called correctly in `_begin_recording` (stub written immediately) and `_finish_worker` (finalised on clean stop). No further work needed.
 
-**Dependencies:** Phase 3
-
-**Done when:** Every recording start creates a `.json` file; every clean stop updates it to "complete."
+**Done when:** (already done) Every recording start creates a `.json` file; every clean stop updates it to "complete."
 <!-- END_PHASE_4 -->
 
 <!-- START_PHASE_5 -->
 ### Phase 5: GUI Refinement & Mode Selection
 **Goal:** Finalize the user interface for rig-wide operation.
 
-**Components:**
-- `camera_capture.py`: Implement the Mode Selector, Armed status indicator, and dynamic FPS controls.
+**Status: COMPLETE** — Mode Selector (Triggered / Free Record / View Only radio buttons), Armed status label (`● ARMED — waiting for Open Ephys...`), and dynamic FPS combobox (enabled only in Free Record mode) are all implemented. "View Only" shows a messagebox and returns without writing to disk. The "Synced" mode ARMED state already waits for OE; completing Phase 3 will extend this to Matlab and button triggers.
 
-**Dependencies:** Phase 4
-
-**Done when:** GUI reflects hardware state correctly; "View Only" works without disk I/O; "Synced" mode waits correctly for external triggers.
+**Done when:** (already done) GUI reflects hardware state correctly; "View Only" works without disk I/O; "Synced" mode waits correctly for external triggers.
 <!-- END_PHASE_5 -->
 
 ## 🔵 Additional Considerations
