@@ -336,6 +336,10 @@ class CameraApp:
         self._metadata     = None
         self._rec_start    = None
 
+        # OR Logic: sources with active start requests
+        self._active_sources   = set()
+        self._barcodes_running = False    # mirrors Arduino barcode state for button toggle
+
         # Sync
         self.sync = SyncController(cfg, tk_root=root)
 
@@ -348,13 +352,20 @@ class CameraApp:
         print("Connecting Arduino...")
         self._connect_arduino()
         print("Arduino connect attempted")
-        print("Starting OE polling...")
+        if self.sync.arduino_connected:
+            self.sync.start_serial_reader(on_arduino_event=self._on_arduino_event)
+            print("SerialReaderThread started")
+        print("Starting OE polling and UDP listener...")
         self.sync.start_polling(
             on_record_start=self._oe_record_started,
             on_record_stop=self._oe_record_stopped,
             on_status_change=self._oe_status_changed,
         )
-        print("OE polling started")
+        self.sync.start_udp_listener(
+            on_matlab_start=self._matlab_started,
+            on_matlab_stop=self._matlab_stopped,
+        )
+        print("OE polling and UDP listener started")
 
         # Start preview loop
         self.root.after(self.PREVIEW_INTERVAL_MS, self._update_preview)
@@ -586,6 +597,26 @@ class CameraApp:
             return
         if self.state == AppState.RECORDING:
             self._end_recording()
+
+    # --------------------------------------------------- Arduino and Matlab callbacks
+    def _on_arduino_event(self, event: str):
+        """Handle EVENT: strings from the Arduino SerialReaderThread.
+        Called on the tkinter main thread via sync._fire().
+        Placeholder for Task 3 implementation.
+        """
+        pass
+
+    def _matlab_started(self):
+        """Matlab sent a UDP 'START' — request recording start (TRIGGERED mode only).
+        Placeholder for Task 4 implementation.
+        """
+        pass
+
+    def _matlab_stopped(self):
+        """Matlab sent a UDP 'STOP' — release matlab's recording request.
+        Placeholder for Task 4 implementation.
+        """
+        pass
 
     # --------------------------------------------------- record / stop buttons
     def _on_record(self):
@@ -830,6 +861,7 @@ class CameraApp:
         print("_cleanup: starting...")
         try:
             self.sync.stop_polling()
+            self.sync.stop_udp_listener()
             self.sync.disconnect_arduino()
             print("_cleanup: sync stopped")
         except Exception as e:
