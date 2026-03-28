@@ -247,6 +247,28 @@ class SyncController:
         if self._oe_thread:
             self._oe_thread.join(timeout=3.0)
 
+    def cmd_stop_oe_recording(self):
+        """Send HTTP PUT to Open Ephys to stop recording (mode=IDLE).
+        Best-effort: silently swallows errors so caller is not blocked.
+        Call this after the video writer has finished and closed.
+        """
+        if not _HAS_URLLIB:
+            return
+        host = self._cfg['hardware']['open_ephys_host']
+        port = self._cfg['hardware']['open_ephys_port']
+        url  = f"http://{host}:{port}/api/status"
+        data = _json.dumps({"mode": "IDLE"}).encode('utf-8')
+        req  = urllib.request.Request(
+            url, data=data,
+            headers={"Content-Type": "application/json"},
+            method='PUT'
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=2.0):
+                pass
+        except Exception:
+            pass
+
     def _poll_loop(self):
         host     = self._cfg['hardware']['open_ephys_host']
         port     = self._cfg['hardware']['open_ephys_port']
