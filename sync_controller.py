@@ -194,6 +194,14 @@ class SyncController:
         """'E' - free record stop: stop cam TTLs."""
         self._send(b'E')
 
+    def cmd_start_barcodes(self):
+        """'B' - start barcode TTLs only, without affecting camera TTLs."""
+        self._send(b'B')
+
+    def cmd_stop_barcodes(self):
+        """'D' - stop barcode TTLs only, without affecting camera TTLs."""
+        self._send(b'D')
+
     def cmd_start_all(self):
         """'A' - legacy: start barcodes + cam immediately."""
         self._send(b'A')
