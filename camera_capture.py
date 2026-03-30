@@ -205,16 +205,26 @@ def init_cam(cam, cfg: dict, fps: int, triggered: bool, enable_output: bool = Tr
     else:
         cam.TriggerMode.SetValue(PySpin.TriggerMode_Off)
 
-    cam.LineSelector.SetValue(PySpin.LineSelector_Line1)
-    # LineMode must be Output for LineSource to be writable
-    if PySpin.IsAvailable(cam.LineMode) and PySpin.IsWritable(cam.LineMode):
-        cam.LineMode.SetValue(PySpin.LineMode_Output)
+    # Line 1 output configuration (Line 1 is typically Opto-isolated Output on Blackfly S)
+    try:
+        cam.LineSelector.SetValue(PySpin.LineSelector_Line1)
+        if PySpin.IsAvailable(cam.LineMode) and PySpin.IsWritable(cam.LineMode):
+            cam.LineMode.SetValue(PySpin.LineMode_Output)
+        
+        if PySpin.IsAvailable(cam.LineSource) and PySpin.IsWritable(cam.LineSource):
+            if enable_output:
+                # ExposureActive sends a pulse for the duration of the shutter
+                cam.LineSource.SetValue(PySpin.LineSource_ExposureActive)
+            else:
+                # Off disables the physical output pulse
+                try:
+                    cam.LineSource.SetValue(PySpin.LineSource_Off)
+                except PySpin.SpinnakerException:
+                    # Some models might not support 'Off' for certain lines
+                    pass
+    except Exception as e:
+        print(f"Warning: Line 1 (Exposure TTL) configuration failed: {e}")
 
-    if PySpin.IsAvailable(cam.LineSource) and PySpin.IsWritable(cam.LineSource):
-        if enable_output:
-            cam.LineSource.SetValue(PySpin.LineSource_ExposureActive)
-        else:
-            cam.LineSource.SetValue(PySpin.LineSource_Off)
 
 
 def make_writer(filepath: str, cfg: dict, fps: int):
