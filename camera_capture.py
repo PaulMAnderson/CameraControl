@@ -206,11 +206,15 @@ def init_cam(cam, cfg: dict, fps: int, triggered: bool, enable_output: bool = Tr
         cam.TriggerMode.SetValue(PySpin.TriggerMode_Off)
 
     cam.LineSelector.SetValue(PySpin.LineSelector_Line1)
-    if enable_output:
+    # LineMode must be Output for LineSource to be writable
+    if PySpin.IsAvailable(cam.LineMode) and PySpin.IsWritable(cam.LineMode):
         cam.LineMode.SetValue(PySpin.LineMode_Output)
-        cam.LineSource.SetValue(PySpin.LineSource_ExposureActive)
-    else:
-        cam.LineSource.SetValue(PySpin.LineSource_Off)
+
+    if PySpin.IsAvailable(cam.LineSource) and PySpin.IsWritable(cam.LineSource):
+        if enable_output:
+            cam.LineSource.SetValue(PySpin.LineSource_ExposureActive)
+        else:
+            cam.LineSource.SetValue(PySpin.LineSource_Off)
 
 
 def make_writer(filepath: str, cfg: dict, fps: int):
