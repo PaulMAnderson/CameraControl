@@ -23,6 +23,21 @@ The **Unified Sync Controller** is a centralized orchestration system designed f
 - **`barcode_sync_millis_button/`**: Arduino firmware for TTL pulse generation and barcode timing.
 - **`docs/`**: Detailed design and implementation documentation.
 
+## Documentation
+
+Comprehensive design plans and implementation details can be found in the [docs/](docs/) directory:
+- **[Design Plans](docs/design-plans/)**: Architectural overview of the Unified Sync Controller.
+- **[Implementation Plans](docs/implementation-plans/)**: Phased development roadmap.
+- **[Test Plans](docs/test-plans/)**: Verification strategies and requirements.
+
+## Future Roadmap
+
+The ongoing development is tracked in [TODO.md](TODO.md). Key upcoming features include:
+- Robust Arduino firmware hardening.
+- Unified I/O layer for Serial, UDP, and HTTP.
+- Advanced "OR Logic" for multi-source camera triggering.
+- Fail-safe metadata logging.
+
 ## Setup
 
 1. **Hardware**: Connect an Arduino (see `barcode_sync_millis_button.ino` for pinouts) and a compatible camera.
