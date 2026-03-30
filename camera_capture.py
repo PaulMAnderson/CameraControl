@@ -216,12 +216,15 @@ def init_cam(cam, cfg: dict, fps: int, triggered: bool, enable_output: bool = Tr
                 # ExposureActive sends a pulse for the duration of the shutter
                 cam.LineSource.SetValue(PySpin.LineSource_ExposureActive)
             else:
-                # Off disables the physical output pulse
+                # Set to UserOutput0 to effectively 'silence' the line (AC5.1)
                 try:
-                    cam.LineSource.SetValue(PySpin.LineSource_Off)
+                    cam.LineSource.SetValue(PySpin.LineSource_UserOutput0)
                 except PySpin.SpinnakerException:
-                    # Some models might not support 'Off' for certain lines
-                    pass
+                    # Fallback to 'Off' if UserOutput0 is somehow not available
+                    try:
+                        cam.LineSource.SetValue(PySpin.LineSource_Off)
+                    except PySpin.SpinnakerException:
+                        pass
     except Exception as e:
         print(f"Warning: Line 1 (Exposure TTL) configuration failed: {e}")
 
