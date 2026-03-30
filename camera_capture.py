@@ -160,7 +160,7 @@ def write_metadata(filepath: str, meta: dict):
 
 
 # ================================================================ camera init
-def init_cam(cam, cfg: dict, fps: int, triggered: bool):
+def init_cam(cam, cfg: dict, fps: int, triggered: bool, enable_output: bool = True):
     """Initialise BlackFly S with settings from config."""
     cam.Init()
     cam.UserSetSelector.SetValue(PySpin.UserSetSelector_Default)
@@ -206,8 +206,11 @@ def init_cam(cam, cfg: dict, fps: int, triggered: bool):
         cam.TriggerMode.SetValue(PySpin.TriggerMode_Off)
 
     cam.LineSelector.SetValue(PySpin.LineSelector_Line1)
-    cam.LineMode.SetValue(PySpin.LineMode_Output)
-    cam.LineSource.SetValue(PySpin.LineSource_ExposureActive)
+    if enable_output:
+        cam.LineMode.SetValue(PySpin.LineMode_Output)
+        cam.LineSource.SetValue(PySpin.LineSource_ExposureActive)
+    else:
+        cam.LineSource.SetValue(PySpin.LineSource_Off)
 
 
 def make_writer(filepath: str, cfg: dict, fps: int):
@@ -308,7 +311,7 @@ def save_thread_func(write_queue, writer, frame_stats, stop_event):
 # ================================================================= main GUI
 class CameraApp:
 
-    PREVIEW_INTERVAL_MS = 66   # ~15 fps preview update
+    PREVIEW_INTERVAL_MS = 40   # 25 fps preview update
 
     def __init__(self, root: tk.Tk, cfg: dict):
         self.root  = root
@@ -335,6 +338,11 @@ class CameraApp:
         self._filepath     = None
         self._metadata     = None
         self._rec_start    = None
+
+        # Trigger selection (OR Logic)
+        self.trigger_oe_var      = tk.BooleanVar(value=True)
+        self.trigger_matlab_var  = tk.BooleanVar(value=True)
+        self.trigger_button_var  = tk.BooleanVar(value=True)
 
         # OR Logic: sources with active start requests
         self._active_sources   = set()
@@ -416,9 +424,16 @@ class CameraApp:
                                 value=val, command=self._on_mode_change)
             rb.grid(row=3+i, column=0, sticky='w')
 
+        # Trigger selection (only visible/relevant in Triggered mode)
+        self.trigger_frame = tk.Frame(right, padx=20)
+        self.trigger_frame.grid(row=6, column=0, sticky='w')
+        tk.Checkbutton(self.trigger_frame, text="Open Ephys", variable=self.trigger_oe_var).pack(anchor='w')
+        tk.Checkbutton(self.trigger_frame, text="Matlab (UDP)", variable=self.trigger_matlab_var).pack(anchor='w')
+        tk.Checkbutton(self.trigger_frame, text="Hardware Button", variable=self.trigger_button_var).pack(anchor='w')
+
         # FPS (free record only)
         fps_frame = tk.Frame(right)
-        fps_frame.grid(row=6, column=0, sticky='w', pady=(6,0))
+        fps_frame.grid(row=7, column=0, sticky='w', pady=(6,0))
         tk.Label(fps_frame, text="FPS:").pack(side='left')
         self.fps_var = tk.StringVar(value=str(self.cfg['camera']['triggered_fps']))
         fps_opts = [str(x) for x in self.cfg['gui']['free_record_fps_options']]
@@ -434,22 +449,34 @@ class CameraApp:
 
         # Status indicators
         status_frame = tk.Frame(right)
-        status_frame.grid(row=8, column=0, sticky='w')
+        status_frame.grid(row=10, column=0, sticky='w')
+        
+        # Open Ephys / Arduino
         self._oe_dot    = tk.Label(status_frame, text="●", fg='grey', font=('TkDefaultFont', 12))
         self._oe_dot.grid(row=0, column=0, sticky='w')
         self._oe_label  = tk.Label(status_frame, text="Open Ephys: connecting...")
         self._oe_label.grid(row=0, column=1, sticky='w', padx=4)
+        
         self._ard_dot   = tk.Label(status_frame, text="●", fg='grey', font=('TkDefaultFont', 12))
         self._ard_dot.grid(row=1, column=0, sticky='w')
         self._ard_label = tk.Label(status_frame, text="Arduino: connecting...")
         self._ard_label.grid(row=1, column=1, sticky='w', padx=4)
 
+        # Hardware Buttons indicators
+        self._btn_cam_dot = tk.Label(status_frame, text="●", fg='grey', font=('TkDefaultFont', 12))
+        self._btn_cam_dot.grid(row=2, column=0, sticky='w')
+        tk.Label(status_frame, text="Cam Button").grid(row=2, column=1, sticky='w', padx=4)
+        
+        self._btn_bar_dot = tk.Label(status_frame, text="●", fg='grey', font=('TkDefaultFont', 12))
+        self._btn_bar_dot.grid(row=3, column=0, sticky='w')
+        tk.Label(status_frame, text="Barcode Button").grid(row=3, column=1, sticky='w', padx=4)
+
         ttk.Separator(right, orient='horizontal').grid(
-            row=9, column=0, sticky='ew', pady=8)
+            row=11, column=0, sticky='ew', pady=8)
 
         # Stats
         stats_frame = tk.Frame(right)
-        stats_frame.grid(row=10, column=0, sticky='w')
+        stats_frame.grid(row=12, column=0, sticky='w')
         self._stat_frame_lbl   = tk.Label(stats_frame, text="Frame:   0",   anchor='w', width=28)
         self._stat_elapsed_lbl = tk.Label(stats_frame, text="Elapsed: --",  anchor='w', width=28)
         self._stat_dropped_lbl = tk.Label(stats_frame, text="Dropped: 0",   anchor='w', width=28)
@@ -507,9 +534,8 @@ class CameraApp:
                 messagebox.showerror("No Camera", "No FLIR camera detected.")
                 sys.exit(1)
             self._cam = self._cam_list[0]
-            fps = self.cfg['camera']['triggered_fps']
-            triggered = (self.mode == CaptureMode.TRIGGERED)
-            init_cam(self._cam, self.cfg, fps, triggered)
+            # Initialise with 25 FPS and no output for initial preview
+            init_cam(self._cam, self.cfg, fps=25, triggered=False, enable_output=False)
             self._start_preview_capture()
         except Exception as e:
             messagebox.showerror("Camera Error", f"Failed to initialise camera:\n{e}")
@@ -519,8 +545,12 @@ class CameraApp:
         """Start the capture thread in free-run mode (preview only, no writer).
         Always free-run regardless of selected mode so preview works without TTLs."""
         print("_start_preview_capture: configuring camera for free-run preview...")
-        fps = self.cfg['camera']['triggered_fps']
-        init_cam(self._cam, self.cfg, fps, triggered=False)
+        # AC5.1: "View Only" mode shows a preview but must not trigger camera pulses or barcodes.
+        # We also disable Line 1 output (exposures) during preview.
+        if self.sync.arduino_connected:
+            self.sync.cmd_stop_all()
+
+        init_cam(self._cam, self.cfg, fps=25, triggered=False, enable_output=False)
         self._reset_frame_stats()
         self._stop_event.clear()
         self._ready_event.clear()
@@ -578,6 +608,8 @@ class CameraApp:
 
     def _oe_record_started(self):
         """Open Ephys just started recording — trigger capture if in TRIGGERED mode."""
+        if not self.trigger_oe_var.get():
+            return
         if self.mode != CaptureMode.TRIGGERED:
             return
         if self.state not in (AppState.IDLE, AppState.ARMED):
@@ -622,11 +654,20 @@ class CameraApp:
         Called on the tkinter main thread via sync._fire().
         """
         if event == 'CAM_BUTTON':
-            if self.state == AppState.ARMED:
-                self._trigger_start('button')
-            elif self.state == AppState.RECORDING:
-                self._trigger_stop('button')
+            # Visual feedback: flash dot green
+            self._btn_cam_dot.config(fg='#4CAF50')
+            self.root.after(200, lambda: self._btn_cam_dot.config(fg='grey'))
+
+            if self.trigger_button_var.get():
+                if self.state == AppState.ARMED:
+                    self._trigger_start('button')
+                elif self.state == AppState.RECORDING:
+                    self._trigger_stop('button')
+
         elif event == 'BARCODE_BUTTON':
+            # Visual feedback: flash dot green
+            self._btn_bar_dot.config(fg='#4CAF50')
+            self.root.after(200, lambda: self._btn_bar_dot.config(fg='grey'))
             self._toggle_barcodes()
         else:
             print(f"_on_arduino_event: unknown event ignored: {event!r}")
@@ -644,6 +685,8 @@ class CameraApp:
 
     def _matlab_started(self):
         """Matlab sent a UDP 'START' — request recording start (TRIGGERED mode only)."""
+        if not self.trigger_matlab_var.get():
+            return
         if self.mode != CaptureMode.TRIGGERED:
             return
         self._trigger_start('matlab')
@@ -676,7 +719,7 @@ class CameraApp:
             self.record_btn.config(state='disabled')
             self.stop_btn.config(state='normal')
             # If OE is already recording (e.g. user clicked Record after OE started)
-            if self.sync.oe_state == 'RECORD':
+            if self.sync.oe_state == 'RECORD' and self.trigger_oe_var.get():
                 self._begin_recording()
 
         elif self.mode == CaptureMode.FREE_RECORD:
@@ -726,7 +769,8 @@ class CameraApp:
         # Stop current preview-only capture, reconfigure camera, restart with writer
         self._stop_capture_thread()
         triggered = (self.mode == CaptureMode.TRIGGERED)
-        init_cam(self._cam, self.cfg, fps, triggered)
+        # Enable Line 1 output (exposures) during recording
+        init_cam(self._cam, self.cfg, fps, triggered, enable_output=True)
 
         # Build write queue and writer
         self._write_queue = queue.Queue()
