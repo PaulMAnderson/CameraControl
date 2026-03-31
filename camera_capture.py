@@ -253,7 +253,21 @@ def cam_capture_thread(cam, write_queue, preview_queue, frame_stats,
     last_id = -1
 
     try:
+        # --- PHASE 1: BUFFER FLUSH ---
+        # Discard stale frames for ~500ms to ensure we are waiting for FRESH triggers
+        flush_start = time.time()
+        while time.time() - flush_start < 0.5:
+            try:
+                # Use a very short timeout for flushing
+                image = cam.GetNextImage(100)
+                image.Release()
+            except PySpin.SpinnakerException:
+                break # Buffer empty or camera not pulsing yet (expected)
+        
+        # Now we are truly ready
         ready_event.set()
+
+        # --- PHASE 2: CAPTURE LOOP ---
         while not stop_event.is_set():
             try:
                 image = cam.GetNextImage(timeout_ms)
@@ -737,36 +751,115 @@ class CameraApp:
 
     # --------------------------------------------------- record / stop buttons
     def _on_arm(self):
+        """Passive ARM: Prepare everything in background and wait for a trigger."""
         if self.state != AppState.IDLE:
             return
+
         animal = self.animal_id_var.get().strip()
         if not animal:
             messagebox.showwarning("Animal ID", "Please enter an Animal ID before recording.")
             return
+
+        # Lock tabs immediately
         self._set_tabs_locked(True)
         self.state = AppState.ARMED
-        self._set_state_label("● ARMED — waiting for trigger...", '#FF9800')
+        self._set_state_label("● SETTING UP CAMERA...", '#FF9800')
+        
         self.arm_btn.config(state='disabled')
+        self.record_btn.config(state='disabled')
         self.stop_btn.config(state='normal')
-        self.start_triggers_btn.config(state='normal')
-        self._begin_recording()
+        self.start_triggers_btn.config(state='disabled') # Wait for setup
+        
+        # Start initialization in background to prevent UI freeze
+        threading.Thread(target=self._async_begin_recording, daemon=True).start()
+
+    def _async_begin_recording(self):
+        """Background task to initialize camera and writer without freezing UI."""
+        try:
+            animal   = self.animal_id_var.get().strip()
+            fps      = int(self.fps_var.get())
+            filepath = self._make_filepath(animal)
+            
+            self._filepath    = filepath
+            self._metadata    = make_metadata_stub(self.cfg, animal, self.mode, fps, filepath)
+            write_metadata(filepath, self._metadata)
+            
+            self._stop_capture_thread()
+            
+            triggered = (self.mode == CaptureMode.TRIGGERED)
+            init_cam(self._cam, self.cfg, fps, triggered, enable_output=True)
+            
+            self._write_queue = queue.Queue()
+            self._reset_frame_stats()
+            self._stop_event.clear()
+            self._ready_event.clear()
+            
+            self._writer = make_writer(filepath, self.cfg, fps)
+            
+            # Start save thread
+            self._save_thread = threading.Thread(
+                target=save_thread_func, 
+                args=(self._write_queue, self._writer, self._frame_stats, threading.Event()), 
+                daemon=True
+            )
+            self._save_thread.start()
+            
+            self._cam.BeginAcquisition()
+            
+            # Start capture thread
+            self._capture_thread = threading.Thread(
+                target=cam_capture_thread, 
+                args=(self._cam, self._write_queue, self._preview_queue, 
+                      self._frame_stats, self._stop_event, self._ready_event, self.cfg, self), 
+                daemon=True
+            )
+            self._capture_thread.start()
+            
+            # Wait for capture thread to signal it has flushed buffers
+            if self._ready_event.wait(timeout=5.0):
+                self.root.after(0, self._on_setup_complete)
+            else:
+                raise TimeoutError("Camera capture thread failed to start/flush")
+                
+        except Exception as e:
+            print(f"Async Init Error: {e}")
+            traceback.print_exc()
+            self.root.after(0, lambda: messagebox.showerror("Init Error", f"Failed to setup recording:\n{e}"))
+            self.root.after(0, self._on_stop)
+
+    def _on_setup_complete(self):
+        """Called on main thread once async setup finishes."""
+        if self.state == AppState.ARMED:
+            self._set_state_label("● ARMED — waiting for trigger...", '#FF9800')
+            self.start_triggers_btn.config(state='normal')
+            self.animal_entry.config(state='disabled')
+            self._file_label.config(text=f"File: {Path(self._filepath).name}", fg='black')
 
     def _start_hardware_triggers(self):
-        if self.state == AppState.ARMED:
-            print("Starting hardware triggers...")
+        """Manually or automatically start the Arduino pulses (sends 'R')."""
+        # Allow triggers even if software has already falsely transitioned to RECORDING
+        if self.state in (AppState.ARMED, AppState.RECORDING):
+            print("Starting hardware triggers (R)...")
             self.sync.cmd_recording_active()
             self.start_triggers_btn.config(state='disabled')
 
     def _on_record(self):
+        """Start FREE RECORD immediately."""
         if self.state != AppState.IDLE:
             return
-        animal = self.animal_id_var.get().strip()
-        if not animal:
-            messagebox.showwarning("Animal ID", "Please enter an Animal ID before recording.")
-            return
-        self._set_tabs_locked(True)
-        self.sync.cmd_start_cam_free()
-        self._begin_recording()
+        # Use the same async logic for consistency
+        self._on_arm() # This enters ARMED state in background
+        self.root.after(100, self._check_free_record_start)
+
+    def _check_free_record_start(self):
+        """Wait for setup to finish, then fire triggers for free record."""
+        if self.state == AppState.ARMED and self.start_triggers_btn['state'] == 'normal':
+            self.sync.cmd_start_cam_free()
+            self._start_hardware_triggers()
+        elif self.state == AppState.IDLE:
+            return # Cancelled
+        else:
+            self.root.after(100, self._check_free_record_start)
 
     def _on_stop(self):
         self._active_sources.clear()
@@ -776,8 +869,11 @@ class CameraApp:
             self._set_state_label("● IDLE", 'grey')
             self._on_mode_change()
             self.stop_btn.config(state='disabled')
+            self.start_triggers_btn.config(state='disabled')
             self._set_tabs_locked(False)
+            self.animal_entry.config(state='normal')
             return
+
         if self.state == AppState.RECORDING:
             self.sync.cmd_stop_cam_free()
             self._end_recording()
