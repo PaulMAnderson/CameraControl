@@ -365,10 +365,12 @@ class SyncController:
             # 2. Check Recording Name (for Animal ID extraction)
             new_rec_info = self._fetch_oe_json(rec_url)
             if new_rec_info:
-                base_name = new_rec_info.get('base_name')
-                if base_name and base_name != self._oe_recording_name:
-                    self._oe_recording_name = base_name
-                    self._fire(self._on_recording_name_change, base_name)
+                # The user enters AnimalID in the 'prepend_text' field
+                prepend = new_rec_info.get('prepend_text')
+                if prepend and prepend != self._oe_recording_name:
+                    self._oe_recording_name = prepend
+                    # Strip trailing/leading spaces before sending to GUI
+                    self._fire(self._on_recording_name_change, prepend.strip())
 
             self._oe_stop.wait(interval)
 

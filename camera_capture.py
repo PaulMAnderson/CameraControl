@@ -753,19 +753,16 @@ class CameraApp:
             return
         self._trigger_stop('oe')
 
-    def _oe_recording_name_changed(self, base_name: str):
-        """OE recording name updated. Extract Animal ID (first word)."""
-        if not base_name:
+    def _oe_recording_name_changed(self, animal_id: str):
+        """OE recording prepend_text updated. Auto-fill Animal ID."""
+        if not animal_id:
             return
-        
-        # Format: "ANIMALID YYYY-MM-DD_HH-MM-SS Protocol Config"
-        animal_id = base_name.split(' ')[0]
         
         # Only auto-fill if we are IDLE (don't overwrite while armed/recording)
         if self.state == AppState.IDLE:
             current = self.animal_id_var.get().strip()
             if animal_id != current:
-                print(f"Auto-filling Animal ID from OE: {animal_id}")
+                print(f"Auto-filling Animal ID from OE (prepend_text): {animal_id}")
                 self.animal_id_var.set(animal_id)
 
     # --------------------------------------------------- OR Logic trigger routing
