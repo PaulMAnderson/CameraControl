@@ -1,3 +1,5 @@
+#include <EEPROM.h>
+
 /*
   Based in part on code from the: 
     Optogenetics and Neural Engineering Core ONE Core
@@ -36,6 +38,10 @@ bool camStartPending = false;
 
 // 'X' command: barcodes finish their current cycle before stopping
 bool barcodeStopPending = false;
+
+// EEPROM addresses
+const int EEPROM_ADDR_BARCODE = 0;
+const int EEPROM_ADDR_CAM     = 1;
 
 //////// SETUP Input ////////
 const int ttlPin = 8;
@@ -89,6 +95,10 @@ void setup() {
   Serial.begin(9600);
   Serial.println("Serial Initialised...");
 
+  // Load state from EEPROM
+  runBarcode = EEPROM.read(EEPROM_ADDR_BARCODE) == 1;
+  runCam     = EEPROM.read(EEPROM_ADDR_CAM)     == 1;
+
   pinMode(barcodePin,       OUTPUT); digitalWrite(barcodePin, LOW);
   pinMode(camPin,           OUTPUT); digitalWrite(camPin,     LOW);
   pinMode(ledPin,           OUTPUT); digitalWrite(ledPin,     HIGH);
@@ -109,6 +119,7 @@ void loop() {
     case 'A': // legacy: start everything immediately
       if (!runBarcode) { runBarcode = true; Serial.println("Running Barcode Pulses..."); }
       if (!runCam)     { runCam     = true; Serial.println("Running Camera TTL Pulses..."); }
+      saveState();
       camStartPending    = false;
       barcodeStopPending = false;
       break;
@@ -116,32 +127,50 @@ void loop() {
     case 'S': // legacy: stop everything immediately
       if (runBarcode) { runBarcode = false; Serial.println("Stopped Barcode Pulses."); }
       if (runCam)     { runCam     = false; Serial.println("Stopped Camera TTL Pulses."); }
+      saveState();
       camStartPending    = false;
       barcodeStopPending = false;
       ensurePinsLow();
       break;
 
     case 'B': // barcodes only - start
-      if (!runBarcode) { runBarcode = true; Serial.println("Running Barcode TTL Pulses..."); }
+      if (!runBarcode) { 
+        runBarcode = true; 
+        saveState();
+        Serial.println("Running Barcode TTL Pulses..."); 
+      }
       break;
 
     case 'D': // barcodes only - stop
-      if (runBarcode) { runBarcode = false; Serial.println("Stopping Barcode TTL Pulses..."); }
+      if (runBarcode) { 
+        runBarcode = false; 
+        saveState();
+        Serial.println("Stopping Barcode TTL Pulses..."); 
+      }
       break;
 
     case 'C': // camera only - start
-      if (!runCam) { runCam = true; Serial.println("Running Camera TTL Pulses..."); }
+      if (!runCam) { 
+        runCam = true; 
+        saveState();
+        Serial.println("Running Camera TTL Pulses..."); 
+      }
       camStartPending = false;
       break;
 
     case 'E': // camera only - stop
-      if (runCam) { runCam = false; Serial.println("Stopping Camera TTL Pulses..."); }
+      if (runCam) { 
+        runCam = false; 
+        saveState();
+        Serial.println("Stopping Camera TTL Pulses..."); 
+      }
       break;
 
     case 'R': // === Recording active ===
       // Start barcodes immediately so ephys file captures a clean barcode at the start
       if (!runBarcode) {
         runBarcode = true;
+        saveState();
         Serial.println("R: Barcodes started.");
       }
       // Defer camera TTLs to next clean barcode boundary
@@ -158,6 +187,7 @@ void loop() {
       // Stop camera TTLs immediately - ephys file is still open
       if (runCam) {
         runCam   = false;
+        saveState();
         camState = false;
         digitalWrite(camPin, LOW);
         Serial.println("X: Camera TTLs stopped.");
@@ -191,6 +221,11 @@ void loop() {
 // =====================================================================
 // Helpers
 // =====================================================================
+
+void saveState() {
+  EEPROM.update(EEPROM_ADDR_BARCODE, runBarcode ? 1 : 0);
+  EEPROM.update(EEPROM_ADDR_CAM,     runCam     ? 1 : 0);
+}
 
 void printStatus() {
   Serial.print("STATUS barcode=");
@@ -341,6 +376,7 @@ void updateBarcode() {
         // Deferred: stop barcodes at a clean boundary
         if (barcodeStopPending) {
           runBarcode         = false;
+          saveState();
           barcodeStopPending = false;
           digitalWrite(barcodePin, LOW);
           digitalWrite(ledPin,     LOW);

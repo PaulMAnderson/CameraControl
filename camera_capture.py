@@ -249,11 +249,10 @@ def make_writer(filepath: str, cfg: dict, fps: int):
 
 # ============================================================= capture thread
 def cam_capture_thread(cam, write_queue, preview_queue, frame_stats,
-                        stop_event, ready_event, cfg):
+                        stop_event, ready_event, cfg, app_ref=None):
     """
-    Runs in its own thread. Pulls frames from camera, pushes to write_queue
-    (every frame) and preview_queue (non-blocking, drops ok).
-    frame_stats dict is updated live for GUI display.
+    Runs in its own thread. Pulls frames from camera, pushes to write_queue.
+    If app_ref is provided and state is ARMED, transitions to RECORDING on first frame.
     """
     timeout_ms = cfg['camera']['cam_timeout_ms']
     h = cfg['camera']['height']
@@ -275,6 +274,11 @@ def cam_capture_thread(cam, write_queue, preview_queue, frame_stats,
             if image.IsIncomplete():
                 image.Release()
                 continue
+
+            # --- Automatic State Transition ---
+            if app_ref and app_ref.state == AppState.ARMED:
+                # First frame received! Transition to RECORDING on main thread
+                app_ref.root.after(0, app_ref._transition_to_recording)
 
             fid = image.GetFrameID()
             if last_id >= 0 and fid != last_id + 1:
@@ -502,9 +506,13 @@ class CameraApp:
         tk.Checkbutton(ctrl_frame, text="Matlab Commands", variable=self.ctrl_matlab_var).pack(anchor='w')
         tk.Checkbutton(ctrl_frame, text="Hardware Button", variable=self.ctrl_button_var).pack(anchor='w')
 
-        # Stats Area
-        stats_sub = tk.LabelFrame(self.tab_record, text=" Statistics ", padx=10, pady=10)
-        stats_sub.pack(fill='x', pady=10)
+        # Stats and Video Area (Middle)
+        mid_frame = tk.Frame(self.tab_record)
+        mid_frame.pack(fill='both', expand=True, pady=10)
+
+        # Stats Area (Left)
+        stats_sub = tk.LabelFrame(mid_frame, text=" Statistics ", padx=10, pady=10)
+        stats_sub.pack(side='left', fill='y')
 
         self._stat_frame_lbl   = tk.Label(stats_sub, text="Frame:   0",   anchor='w', width=20)
         self._stat_elapsed_lbl = tk.Label(stats_sub, text="Elapsed: --",  anchor='w', width=20)
@@ -512,9 +520,20 @@ class CameraApp:
         self._stat_queue_lbl   = tk.Label(stats_sub, text="Write queue: 0", anchor='w', width=20)
         
         self._stat_frame_lbl.grid(row=0, column=0, sticky='w')
-        self._stat_elapsed_lbl.grid(row=0, column=1, sticky='w')
-        self._stat_dropped_lbl.grid(row=1, column=0, sticky='w')
-        self._stat_queue_lbl.grid(row=1, column=1, sticky='w')
+        self._stat_elapsed_lbl.grid(row=1, column=0, sticky='w')
+        self._stat_dropped_lbl.grid(row=2, column=0, sticky='w')
+        self._stat_queue_lbl.grid(row=3, column=0, sticky='w')
+
+        # Recording Video Canvas (Right)
+        self.record_canvas_frame = tk.Frame(mid_frame, bg='black', relief='sunken', borderwidth=2)
+        self.record_canvas_frame.pack(side='left', padx=(10, 0), fill='both', expand=True)
+        
+        # We'll use a smaller preview for the record tab to keep the window size sane, 
+        # or scale it. For now, let's use the same size but it only shows during record.
+        self.record_canvas = tk.Canvas(self.record_canvas_frame, width=w//2, height=h//2, 
+                                       bg='black', highlightthickness=0)
+        self.record_canvas.pack(expand=True)
+        self._record_preview_image_id = None
 
         # Bottom area: Action Buttons
         action_frame = tk.Frame(self.tab_record, pady=10)
@@ -636,8 +655,11 @@ class CameraApp:
 
     # --------------------------------------------------- Arduino connect
     def _connect_arduino(self):
-        ok, msg = self.sync.connect_arduino()
+        ok, msg, state = self.sync.connect_arduino()
         self._update_arduino_indicator(ok, msg)
+        if ok:
+            self._barcodes_running = (state['barcode'] == 1)
+            self._update_barcode_gui()
 
     def _update_arduino_indicator(self, ok: bool, msg: str = ""):
         if ok:
@@ -761,6 +783,9 @@ class CameraApp:
                                            "Open Ephys is not currently recording. Arm anyway?"):
                     return
 
+            # Lock tabs: can't switch away from record tab while armed/recording
+            self._set_tabs_locked(True)
+
             # Arm: tell Arduino to start barcodes, wait for OE record signal
             self.sync.cmd_recording_active()
             self.state = AppState.ARMED
@@ -770,9 +795,11 @@ class CameraApp:
             
             # If OE is already recording and we are monitoring it
             if self.ctrl_oe_var.get() and self.sync.oe_state == 'RECORD':
+                self._trigger_start('oe')
                 self._begin_recording()
 
         elif self.mode == CaptureMode.FREE_RECORD:
+            self._set_tabs_locked(True)
             self.sync.cmd_start_cam_free()
             self._begin_recording()
 
@@ -784,6 +811,7 @@ class CameraApp:
             self._set_state_label("● IDLE", 'grey')
             self.record_btn.config(state='normal')
             self.stop_btn.config(state='disabled')
+            self._set_tabs_locked(False) # Unlock tabs
             return
 
         if self.state == AppState.RECORDING:
@@ -792,6 +820,23 @@ class CameraApp:
             elif self.mode == CaptureMode.TRIGGERED:
                 self.sync.cmd_recording_ending()
             self._end_recording()
+
+    def _transition_to_recording(self):
+        """Called by cam_capture_thread when the first frame is received while ARMED."""
+        if self.state == AppState.ARMED:
+            self.state = AppState.RECORDING
+            self._rec_start = datetime.now() # Start the timer NOW
+            self._set_state_label("● RECORDING", '#f44336')
+            print("Automatic transition: First frame received, recording started.")
+
+    def _set_tabs_locked(self, locked: bool):
+        """Enable/disable tab switching."""
+        state = 'disabled' if locked else 'normal'
+        for i in range(self.notebook.index('end')):
+            # We must not disable the *current* tab because that hides the UI
+            if self.notebook.index(self.notebook.select()) == i and locked:
+                continue
+            self.notebook.tab(i, state=state)
 
     # --------------------------------------------------- recording lifecycle
     def _make_filepath(self, animal: str) -> str:
@@ -933,36 +978,61 @@ class CameraApp:
 
     # --------------------------------------------------- preview loop
     def _update_preview(self):
-        """Called every PREVIEW_INTERVAL_MS on main thread. Updates canvas + stats."""
+        """Called every PREVIEW_INTERVAL_MS on main thread. Updates canvases + stats."""
         try:
             frame = self._preview_queue.get_nowait()
-            img   = Image.fromarray(frame)
-            photo = ImageTk.PhotoImage(img)
-            if self._preview_image_id is None:
-                self._preview_image_id = self.canvas.create_image(0, 0, anchor='nw', image=photo)
-            else:
-                self.canvas.itemconfig(self._preview_image_id, image=photo)
-            self.canvas._photo = photo   # keep reference
+            
+            # Update Preview Tab Canvas (always show live if on that tab)
+            tab_idx = self.notebook.index(self.notebook.select())
+            if tab_idx == 0:
+                img   = Image.fromarray(frame)
+                photo = ImageTk.PhotoImage(img)
+                if self._preview_image_id is None:
+                    self._preview_image_id = self.canvas.create_image(0, 0, anchor='nw', image=photo)
+                else:
+                    self.canvas.itemconfig(self._preview_image_id, image=photo)
+                self.canvas._photo = photo # keep reference
+
+            # Update Record Tab Canvas (ONLY show if RECORDING)
+            elif tab_idx == 1 and self.state == AppState.RECORDING:
+                # Resize to fit the smaller record canvas
+                h = self.cfg['camera']['height'] // 2
+                w = self.cfg['camera']['width'] // 2
+                img   = Image.fromarray(frame).resize((w, h), Image.NEAREST)
+                photo = ImageTk.PhotoImage(img)
+                if self._record_preview_image_id is None:
+                    self._record_preview_image_id = self.record_canvas.create_image(0, 0, anchor='nw', image=photo)
+                else:
+                    self.record_canvas.itemconfig(self._record_preview_image_id, image=photo)
+                self.record_canvas._photo = photo # keep reference
+            
+            elif tab_idx == 1 and self.state != AppState.RECORDING:
+                # Clear the record canvas if not recording
+                if self._record_preview_image_id is not None:
+                    self.record_canvas.delete(self._record_preview_image_id)
+                    self._record_preview_image_id = None
+
         except queue.Empty:
             pass
 
-        # Update stats
-        captured = self._frame_stats.get('captured', 0)
+        # Update stats - ONLY count captured frames if RECORDING
+        if self.state == AppState.RECORDING:
+            captured = self._frame_stats.get('captured', 0)
+            elapsed = (datetime.now() - self._rec_start).total_seconds()
+            self._stat_frame_lbl.config(text=f"Frame:   {captured:,}")
+            self._stat_elapsed_lbl.config(text=f"Elapsed: {elapsed:.1f} s")
+        else:
+            self._stat_frame_lbl.config(text="Frame:   0")
+            self._stat_elapsed_lbl.config(text="Elapsed: --")
+
         dropped  = self._frame_stats.get('dropped',  0)
         qsize    = self._write_queue.qsize() if self._write_queue else 0
 
-        self._stat_frame_lbl.config(text=f"Frame:   {captured:,}")
         self._stat_dropped_lbl.config(
             text=f"Dropped: {dropped}",
             fg='#f44336' if dropped > 0 else 'black'
         )
         self._stat_queue_lbl.config(text=f"Write queue: {qsize}")
-
-        if self.state == AppState.RECORDING and self._rec_start:
-            elapsed = (datetime.now() - self._rec_start).total_seconds()
-            self._stat_elapsed_lbl.config(text=f"Elapsed: {elapsed:.1f} s")
-        else:
-            self._stat_elapsed_lbl.config(text="Elapsed: --")
 
         self.root.after(self.PREVIEW_INTERVAL_MS, self._update_preview)
 

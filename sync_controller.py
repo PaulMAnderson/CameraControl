@@ -56,25 +56,36 @@ class SyncController:
         self._on_status_change = None    # general status update -> (arduino_ok, oe_state)
 
     # --------------------------------------------------------- Arduino serial
-    def connect_arduino(self) -> tuple[bool, str]:
+    def connect_arduino(self) -> tuple[bool, str, dict]:
         """
-        Open serial connection to Arduino. Returns (success, message).
+        Open serial connection to Arduino. Returns (success, message, state_dict).
         Sends '?' and parses the STATUS response so we know current state.
         """
         port = self._cfg['hardware']['arduino_port']
+        state = {'barcode': 0, 'cam': 0}
         try:
             self._serial = serial.Serial(port, 9600, timeout=2.0)
             time.sleep(2.0)   # Arduino resets on serial connect - wait for boot
             self._serial.reset_input_buffer()
             self._serial.write(b'?')
             response = self._serial.readline().decode('utf-8', errors='ignore').strip()
+            
+            if response.startswith("STATUS"):
+                # Parse STATUS barcode=1 cam=0 ...
+                parts = response.split()
+                for p in parts:
+                    if p.startswith("barcode="):
+                        state['barcode'] = int(p.split('=')[1])
+                    elif p.startswith("cam="):
+                        state['cam'] = int(p.split('=')[1])
+
             self._serial_ok = True
             self._fire_status()
-            return True, f"Arduino connected on {port}. {response}"
+            return True, f"Arduino connected on {port}.", state
         except serial.SerialException as e:
             self._serial_ok = False
             self._fire_status()
-            return False, f"Arduino not found on {port}: {e}"
+            return False, f"Arduino not found on {port}: {e}", state
 
     def disconnect_arduino(self):
         """Send stop-all before closing so pins go low."""
