@@ -25,6 +25,11 @@
     '?' — Print current status over serial (used by Python startup handshake)
 */
 
+// Support for Arduino Due Native Port
+#if defined(ARDUINO_SAM_DUE)
+  #define Serial SerialUSB
+#endif
+
 ////// Timers ////////
 unsigned long currentMillis = 0;
 unsigned long currentMicros = 0;
