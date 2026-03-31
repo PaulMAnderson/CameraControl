@@ -23,9 +23,21 @@ import queue
 import atexit
 import threading
 import traceback
+import subprocess
 from datetime import datetime
 from enum import Enum, auto
 from pathlib import Path
+
+# ── MONKEY PATCH: Hide FFmpeg Console on Windows ──────────────────
+if sys.platform == "win32":
+    _old_popen = subprocess.Popen
+    def _new_popen(*args, **kwargs):
+        if "creationflags" not in kwargs:
+            # 0x08000000 = CREATE_NO_WINDOW
+            kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
+        return _old_popen(*args, **kwargs)
+    subprocess.Popen = _new_popen
+# ──────────────────────────────────────────────────────────────────
 
 # ------------------------------------------------------------------ logging
 _LOG_PATH = Path(__file__).parent / "camera_capture.log"
