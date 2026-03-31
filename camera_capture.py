@@ -405,42 +405,85 @@ class CameraApp:
         self.root.title("FLIR Camera Capture")
         self.root.resizable(False, False)
 
-        # ── left: preview canvas ──────────────────────────────────────────
-        left = tk.Frame(self.root, bg='black')
-        left.grid(row=0, column=0, rowspan=3, padx=(8,4), pady=8, sticky='nsew')
+        # ── GLOBAL STATUS BAR (Top) ───────────────────────────────────────
+        self.global_bar = tk.Frame(self.root, padx=12, pady=8, relief='groove', borderwidth=1)
+        self.global_bar.pack(fill='x', side='top')
+
+        # Arduino Status
+        self._ard_dot   = tk.Label(self.global_bar, text="●", fg='grey', font=('TkDefaultFont', 12))
+        self._ard_dot.pack(side='left')
+        self._ard_label = tk.Label(self.global_bar, text="Arduino: Disconnected", font=('TkDefaultFont', 9, 'bold'))
+        self._ard_label.pack(side='left', padx=(0, 20))
+
+        # Open Ephys Status
+        self._oe_dot    = tk.Label(self.global_bar, text="●", fg='grey', font=('TkDefaultFont', 12))
+        self._oe_dot.pack(side='left')
+        self._oe_label  = tk.Label(self.global_bar, text="Open Ephys: ???", font=('TkDefaultFont', 9, 'bold'))
+        self._oe_label.pack(side='left', padx=(0, 20))
+
+        # Barcode Status & Toggle
+        self._barcode_dot = tk.Label(self.global_bar, text="●", fg='grey', font=('TkDefaultFont', 12))
+        self._barcode_dot.pack(side='left')
+        self._barcode_label = tk.Label(self.global_bar, text="Barcodes: OFF", font=('TkDefaultFont', 9, 'bold'))
+        self._barcode_label.pack(side='left', padx=(0, 10))
+        
+        self.barcode_btn = tk.Button(self.global_bar, text="START BARCODES", 
+                                     bg='#4CAF50', fg='white', font=('TkDefaultFont', 9, 'bold'),
+                                     command=self._toggle_barcodes, padx=10)
+        self.barcode_btn.pack(side='left')
+
+        # ── MAIN CONTENT (Tabs) ───────────────────────────────────────────
+        style = ttk.Style()
+        style.configure('TNotebook.Tab', padding=[20, 4], font=('TkDefaultFont', 10, 'bold'))
+
+        self.notebook = ttk.Notebook(self.root)
+        self.notebook.pack(fill='both', expand=True, padx=4, pady=4)
+
+        # ── TAB 1: PREVIEW ────────────────────────────────────────────────
+        self.tab_preview = tk.Frame(self.notebook, bg='#1a1a1a')
+        self.notebook.add(self.tab_preview, text="  PREVIEW  ")
 
         w = self.cfg['camera']['width']
         h = self.cfg['camera']['height']
-        self.canvas = tk.Canvas(left, width=w, height=h, bg='black',
+        self.canvas = tk.Canvas(self.tab_preview, width=w, height=h, bg='black',
                                 highlightthickness=0)
-        self.canvas.pack()
+        self.canvas.pack(padx=10, pady=10)
         self._preview_image_id = None
+        
+        self._not_recording_overlay = self.canvas.create_text(
+            w // 2, h // 2, 
+            text="NOT RECORDING", 
+            fill="red", 
+            font=('TkDefaultFont', 32, 'bold'),
+            state='normal'
+        )
 
-        # ── right panel ───────────────────────────────────────────────────
-        right = tk.Frame(self.root, padx=8, pady=8)
-        right.grid(row=0, column=1, sticky='nsew')
+        # ── TAB 2: RECORD ─────────────────────────────────────────────────
+        self.tab_record = tk.Frame(self.notebook, padx=12, pady=12)
+        self.notebook.add(self.tab_record, text="  RECORDING  ")
 
-        # Animal ID
-        tk.Label(right, text="Animal ID:", anchor='w').grid(
-            row=0, column=0, sticky='w', pady=(0,2))
+        top_frame = tk.Frame(self.tab_record)
+        top_frame.pack(fill='x', pady=(0, 10))
+
+        # Config Frame (Left)
+        config_frame = tk.LabelFrame(top_frame, text=" Configuration ", padx=10, pady=10)
+        config_frame.pack(side='left', fill='both', expand=True)
+
+        tk.Label(config_frame, text="Animal ID:").grid(row=0, column=0, sticky='w')
         self.animal_id_var = tk.StringVar()
-        self.animal_entry = tk.Entry(right, textvariable=self.animal_id_var, width=20)
-        self.animal_entry.grid(row=1, column=0, sticky='w', pady=(0,8))
+        self.animal_entry = tk.Entry(config_frame, textvariable=self.animal_id_var, width=20)
+        self.animal_entry.grid(row=0, column=1, sticky='w', padx=(5, 0))
 
-        # Mode
-        tk.Label(right, text="Mode:", anchor='w').grid(
-            row=2, column=0, sticky='w', pady=(0,2))
+        tk.Label(config_frame, text="Mode:").grid(row=1, column=0, sticky='w', pady=(10, 0))
         self.mode_var = tk.StringVar(value=self.mode.value)
-        modes = [
-            ("Triggered (default)",  CaptureMode.TRIGGERED.value),
-            ("Free Record",          CaptureMode.FREE_RECORD.value),
-            ("View Only",            CaptureMode.VIEW_ONLY.value),
-        ]
-        for i, (label, val) in enumerate(modes):
-            rb = tk.Radiobutton(right, text=label, variable=self.mode_var,
-                                value=val, command=self._on_mode_change)
-            rb.grid(row=3+i, column=0, sticky='w')
+        self.rb_triggered = tk.Radiobutton(config_frame, text="Triggered", variable=self.mode_var,
+                                           value=CaptureMode.TRIGGERED.value, command=self._on_mode_change)
+        self.rb_triggered.grid(row=1, column=1, sticky='w', pady=(10, 0))
+        self.rb_free = tk.Radiobutton(config_frame, text="Free Record", variable=self.mode_var,
+                                      value=CaptureMode.FREE_RECORD.value, command=self._on_mode_change)
+        self.rb_free.grid(row=2, column=1, sticky='w')
 
+<<<<<<< HEAD
         # Trigger selection (only visible/relevant in Triggered mode)
         self.trigger_frame = tk.Frame(right, padx=20)
         self.trigger_frame.grid(row=6, column=0, sticky='w')
@@ -451,19 +494,25 @@ class CameraApp:
         # FPS (free record only)
         fps_frame = tk.Frame(right)
         fps_frame.grid(row=7, column=0, sticky='w', pady=(6,0))
+=======
+        # FPS Selection
+        fps_frame = tk.Frame(config_frame)
+        fps_frame.grid(row=3, column=0, columnspan=2, sticky='w', pady=(5, 0))
+>>>>>>> b34856a (feat(gui): refactor to tabbed interface and add global status bar)
         tk.Label(fps_frame, text="FPS:").pack(side='left')
         self.fps_var = tk.StringVar(value=str(self.cfg['camera']['triggered_fps']))
         fps_opts = [str(x) for x in self.cfg['gui']['free_record_fps_options']]
         self.fps_menu = ttk.Combobox(fps_frame, textvariable=self.fps_var,
                                      values=fps_opts, width=6, state='disabled')
         self.fps_menu.pack(side='left', padx=4)
-        self.fps_note = tk.Label(fps_frame, text="(set on Arduino in triggered mode)",
-                                 fg='grey', font=('TkDefaultFont', 8))
+        self.fps_note = tk.Label(fps_frame, text="(set on Arduino)", fg='grey', font=('TkDefaultFont', 8))
         self.fps_note.pack(side='left')
 
-        ttk.Separator(right, orient='horizontal').grid(
-            row=7, column=0, sticky='ew', pady=8)
+        # Control Frame (Right)
+        ctrl_frame = tk.LabelFrame(top_frame, text=" Start/Stop Control ", padx=10, pady=10)
+        ctrl_frame.pack(side='left', fill='both', expand=True, padx=(10, 0))
 
+<<<<<<< HEAD
         # Status indicators
         status_frame = tk.Frame(right)
         status_frame.grid(row=10, column=0, sticky='w')
@@ -501,34 +550,71 @@ class CameraApp:
         for i, lbl in enumerate([self._stat_frame_lbl, self._stat_elapsed_lbl,
                                   self._stat_dropped_lbl, self._stat_queue_lbl]):
             lbl.grid(row=i, column=0, sticky='w')
+=======
+        self.ctrl_oe_var = tk.BooleanVar(value=True)
+        self.ctrl_matlab_var = tk.BooleanVar(value=True)
+        self.ctrl_button_var = tk.BooleanVar(value=True)
 
-        ttk.Separator(right, orient='horizontal').grid(
-            row=11, column=0, sticky='ew', pady=8)
+        tk.Checkbutton(ctrl_frame, text="Monitor Open Ephys", variable=self.ctrl_oe_var).pack(anchor='w')
+        tk.Checkbutton(ctrl_frame, text="Matlab Commands", variable=self.ctrl_matlab_var).pack(anchor='w')
+        tk.Checkbutton(ctrl_frame, text="Hardware Button", variable=self.ctrl_button_var).pack(anchor='w')
 
-        # Buttons
-        btn_frame = tk.Frame(right)
-        btn_frame.grid(row=12, column=0, sticky='ew')
-        self.record_btn = tk.Button(btn_frame, text="Record", width=12,
-                                    bg='#4CAF50', fg='white', font=('TkDefaultFont', 10, 'bold'),
+        # Stats Area
+        stats_sub = tk.LabelFrame(self.tab_record, text=" Statistics ", padx=10, pady=10)
+        stats_sub.pack(fill='x', pady=10)
+>>>>>>> b34856a (feat(gui): refactor to tabbed interface and add global status bar)
+
+        self._stat_frame_lbl   = tk.Label(stats_sub, text="Frame:   0",   anchor='w', width=20)
+        self._stat_elapsed_lbl = tk.Label(stats_sub, text="Elapsed: --",  anchor='w', width=20)
+        self._stat_dropped_lbl = tk.Label(stats_sub, text="Dropped: 0",   anchor='w', width=20)
+        self._stat_queue_lbl   = tk.Label(stats_sub, text="Write queue: 0", anchor='w', width=20)
+        
+        self._stat_frame_lbl.grid(row=0, column=0, sticky='w')
+        self._stat_elapsed_lbl.grid(row=0, column=1, sticky='w')
+        self._stat_dropped_lbl.grid(row=1, column=0, sticky='w')
+        self._stat_queue_lbl.grid(row=1, column=1, sticky='w')
+
+        # Bottom area: Action Buttons
+        action_frame = tk.Frame(self.tab_record, pady=10)
+        action_frame.pack(fill='x')
+
+        self.record_btn = tk.Button(action_frame, text="RECORD", width=20, height=2,
+                                    bg='#4CAF50', fg='white', font=('TkDefaultFont', 12, 'bold'),
                                     command=self._on_record)
-        self.record_btn.pack(side='left', padx=(0,4))
-        self.stop_btn = tk.Button(btn_frame, text="Stop", width=12,
-                                  bg='#f44336', fg='white', font=('TkDefaultFont', 10, 'bold'),
+        self.record_btn.pack(side='left', padx=(0, 10))
+
+        self.stop_btn = tk.Button(action_frame, text="STOP", width=20, height=2,
+                                  bg='#f44336', fg='white', font=('TkDefaultFont', 12, 'bold'),
                                   state='disabled', command=self._on_stop)
         self.stop_btn.pack(side='left')
 
         # File path label
-        self._file_label = tk.Label(right, text="File: --", anchor='w',
-                                    fg='grey', font=('TkDefaultFont', 8),
-                                    wraplength=280, justify='left')
-        self._file_label.grid(row=13, column=0, sticky='w', pady=(6,0))
+        self._file_label = tk.Label(self.tab_record, text="File: --", anchor='w',
+                                    fg='grey', font=('TkDefaultFont', 9),
+                                    wraplength=600, justify='left')
+        self._file_label.pack(fill='x', pady=(10, 0))
 
-        # State label (bottom, full width)
+        # Global State label (bottom)
         self._state_label = tk.Label(self.root, text="● IDLE",
-                                     font=('TkDefaultFont', 9), anchor='w', fg='grey')
-        self._state_label.grid(row=2, column=0, columnspan=2, sticky='w', padx=8, pady=(0,6))
+                                     font=('TkDefaultFont', 10, 'bold'), anchor='w', fg='grey', padx=10, pady=5)
+        self._state_label.pack(fill='x', side='bottom')
+
+        # Bind tab change
+        self.notebook.bind("<<NotebookTabChanged>>", self._on_tab_changed)
 
         self._on_mode_change()
+
+    # --------------------------------------------------- tab change handler
+    def _on_tab_changed(self, event):
+        tab_idx = self.notebook.index(self.notebook.select())
+        if tab_idx == 0: # Preview Tab
+            self.canvas.itemconfigure(self._not_recording_overlay, state='normal')
+            # Disable camera pulses but leave barcodes alone
+            if self.sync.arduino_connected:
+                self.sync.cmd_stop_cam_free()
+        else: # Record Tab
+            self.canvas.itemconfigure(self._not_recording_overlay, state='hidden')
+            # No automatic start here anymore, user can toggle barcodes globally
 
     # --------------------------------------------------- mode change handler
     def _on_mode_change(self):
@@ -539,7 +625,7 @@ class CameraApp:
             self.fps_var.set(str(self.cfg['gui']['free_record_fps_options'][-1]))
         else:
             self.fps_menu.config(state='disabled')
-            self.fps_note.config(text="(set on Arduino in triggered mode)")
+            self.fps_note.config(text="(set on Arduino)")
             self.fps_var.set(str(self.cfg['camera']['triggered_fps']))
 
     # --------------------------------------------------- camera init
@@ -551,8 +637,15 @@ class CameraApp:
                 messagebox.showerror("No Camera", "No FLIR camera detected.")
                 sys.exit(1)
             self._cam = self._cam_list[0]
+<<<<<<< HEAD
             # Initialise with 25 FPS and no output for initial preview
             init_cam(self._cam, self.cfg, fps=25, triggered=False, enable_output=False)
+=======
+            fps = self.cfg['camera']['triggered_fps']
+            triggered = (self.mode == CaptureMode.TRIGGERED)
+            init_cam(self._cam, self.cfg, fps, triggered)
+            self._update_barcode_gui() # Initial state refresh
+>>>>>>> b34856a (feat(gui): refactor to tabbed interface and add global status bar)
             self._start_preview_capture()
         except Exception as e:
             messagebox.showerror("Camera Error", f"Failed to initialise camera:\n{e}")
@@ -562,12 +655,25 @@ class CameraApp:
         """Start the capture thread in free-run mode (preview only, no writer).
         Always free-run regardless of selected mode so preview works without TTLs."""
         print("_start_preview_capture: configuring camera for free-run preview...")
+<<<<<<< HEAD
         # AC5.1: "View Only" mode shows a preview but must not trigger camera pulses or barcodes.
         # We also disable Line 1 output (exposures) during preview.
         if self.sync.arduino_connected:
             self.sync.cmd_stop_all()
 
         init_cam(self._cam, self.cfg, fps=25, triggered=False, enable_output=False)
+=======
+        
+        # Ensure acquisition is stopped before reconfiguring
+        try:
+            if self._cam.IsStreaming():
+                self._cam.EndAcquisition()
+        except:
+            pass
+
+        fps = self.cfg['camera']['triggered_fps']
+        init_cam(self._cam, self.cfg, fps, triggered=False)
+>>>>>>> b34856a (feat(gui): refactor to tabbed interface and add global status bar)
         self._reset_frame_stats()
         self._stop_event.clear()
         self._ready_event.clear()
@@ -591,8 +697,9 @@ class CameraApp:
             self._capture_thread.join(timeout=5.0)
         print("_stop_capture_thread: capture thread stopped, ending acquisition...")
         try:
-            self._cam.EndAcquisition()
-            print("_stop_capture_thread: EndAcquisition OK")
+            if self._cam and self._cam.IsStreaming():
+                self._cam.EndAcquisition()
+                print("_stop_capture_thread: EndAcquisition OK")
         except PySpin.SpinnakerException as e:
             print(f"_stop_capture_thread: EndAcquisition skipped ({e})")
         except Exception as e:
@@ -625,40 +732,31 @@ class CameraApp:
 
     def _oe_record_started(self):
         """Open Ephys just started recording — trigger capture if in TRIGGERED mode."""
+<<<<<<< HEAD
         if not self.trigger_oe_var.get():
+=======
+        if not self.ctrl_oe_var.get():
+>>>>>>> b34856a (feat(gui): refactor to tabbed interface and add global status bar)
             return
         if self.mode != CaptureMode.TRIGGERED:
             return
-        if self.state not in (AppState.IDLE, AppState.ARMED):
+        if self.state not in (AppState.ARMED, AppState.RECORDING):
             return
         self._trigger_start('oe')
 
     def _oe_record_stopped(self):
-        """Open Ephys just stopped recording.
-        Intentional no-op: Python is OE's master.
-        The video continues until the last active source (Matlab or button) stops.
-        Python sends the STOP command to OE in _finish_worker after the writer closes.
-        """
+        """Open Ephys just stopped recording."""
         pass
 
     # --------------------------------------------------- OR Logic trigger routing
     def _trigger_start(self, source: str):
-        """Register a source requesting recording start.
-        Starts recording on first call; subsequent calls from other sources just
-        add to _active_sources without restarting.
-
-        Callers must gate on TRIGGERED mode before calling this method.
-        The method applies when state is IDLE or ARMED.
-        """
+        """Register a source requesting recording start."""
         self._active_sources.add(source)
-        if self.state in (AppState.IDLE, AppState.ARMED):
+        if self.state == AppState.ARMED:
             self._begin_recording()
 
     def _trigger_stop(self, source: str):
-        """Register a source releasing its recording request.
-        Recording stops only when _active_sources becomes empty.
-        OE is intentionally never passed here — Python is OE's master.
-        """
+        """Register a source releasing its recording request."""
         self._active_sources.discard(source)
         if self._active_sources:
             return   # other sources still active, keep recording
@@ -667,10 +765,9 @@ class CameraApp:
             self._end_recording()
 
     def _on_arduino_event(self, event: str):
-        """Handle EVENT: strings from the Arduino SerialReaderThread.
-        Called on the tkinter main thread via sync._fire().
-        """
+        """Handle EVENT: strings from the Arduino SerialReaderThread."""
         if event == 'CAM_BUTTON':
+<<<<<<< HEAD
             # Visual feedback: flash dot green
             self._btn_cam_dot.config(fg='#4CAF50')
             self.root.after(200, lambda: self._btn_cam_dot.config(fg='grey'))
@@ -681,6 +778,14 @@ class CameraApp:
                 elif self.state == AppState.RECORDING:
                     self._trigger_stop('button')
 
+=======
+            if not self.ctrl_button_var.get():
+                return
+            if self.state == AppState.ARMED:
+                self._trigger_start('button')
+            elif self.state == AppState.RECORDING:
+                self._trigger_stop('button')
+>>>>>>> b34856a (feat(gui): refactor to tabbed interface and add global status bar)
         elif event == 'BARCODE_BUTTON':
             # Visual feedback: flash dot green
             self._btn_bar_dot.config(fg='#4CAF50')
@@ -690,26 +795,47 @@ class CameraApp:
             print(f"_on_arduino_event: unknown event ignored: {event!r}")
 
     def _toggle_barcodes(self):
-        """Toggle barcode pulses on/off independent of video capture (AC3.3)."""
+        """Toggle barcode pulses on/off independent of video capture."""
         if self._barcodes_running:
             self.sync.cmd_stop_barcodes()
             self._barcodes_running = False
         else:
             self.sync.cmd_start_barcodes()
             self._barcodes_running = True
+        self._update_barcode_gui()
+
+    def _update_barcode_gui(self):
+        """Update the global barcode status indicator and button."""
+        if self._barcodes_running:
+            self._barcode_dot.config(fg='#4CAF50') # Green
+            self._barcode_label.config(text="Barcodes: RUNNING")
+            self.barcode_btn.config(text="STOP BARCODES", bg='#f44336')
+        else:
+            self._barcode_dot.config(fg='grey')
+            self._barcode_label.config(text="Barcodes: OFF")
+            self.barcode_btn.config(text="START BARCODES", bg='#4CAF50')
 
     # --------------------------------------------------- Arduino and Matlab callbacks
 
     def _matlab_started(self):
+<<<<<<< HEAD
         """Matlab sent a UDP 'START' — request recording start (TRIGGERED mode only)."""
         if not self.trigger_matlab_var.get():
+=======
+        """Matlab sent a UDP 'START'."""
+        if not self.ctrl_matlab_var.get():
+>>>>>>> b34856a (feat(gui): refactor to tabbed interface and add global status bar)
             return
         if self.mode != CaptureMode.TRIGGERED:
+            return
+        if self.state not in (AppState.ARMED, AppState.RECORDING):
             return
         self._trigger_start('matlab')
 
     def _matlab_stopped(self):
-        """Matlab sent a UDP 'STOP' — release matlab's recording request."""
+        """Matlab sent a UDP 'STOP'."""
+        if not self.ctrl_matlab_var.get():
+            return
         if self.mode != CaptureMode.TRIGGERED:
             return
         self._trigger_stop('matlab')
@@ -724,19 +850,27 @@ class CameraApp:
             messagebox.showwarning("Animal ID", "Please enter an Animal ID before recording.")
             return
 
-        if self.mode == CaptureMode.VIEW_ONLY:
-            messagebox.showinfo("View Only", "Switch to Triggered or Free Record to save video.")
-            return
-
         if self.mode == CaptureMode.TRIGGERED:
+            # Safety check: Monitor OE enabled but OE not recording
+            if self.ctrl_oe_var.get() and self.sync.oe_state != 'RECORD':
+                if not messagebox.askyesno("Open Ephys Not Recording", 
+                                           "Open Ephys is not currently recording. Arm anyway?"):
+                    return
+
             # Arm: tell Arduino to start barcodes, wait for OE record signal
             self.sync.cmd_recording_active()
             self.state = AppState.ARMED
-            self._set_state_label("● ARMED — waiting for Open Ephys...", '#FF9800')
+            self._set_state_label("● ARMED — waiting for trigger...", '#FF9800')
             self.record_btn.config(state='disabled')
             self.stop_btn.config(state='normal')
+<<<<<<< HEAD
             # If OE is already recording (e.g. user clicked Record after OE started)
             if self.sync.oe_state == 'RECORD' and self.trigger_oe_var.get():
+=======
+            
+            # If OE is already recording and we are monitoring it
+            if self.ctrl_oe_var.get() and self.sync.oe_state == 'RECORD':
+>>>>>>> b34856a (feat(gui): refactor to tabbed interface and add global status bar)
                 self._begin_recording()
 
         elif self.mode == CaptureMode.FREE_RECORD:
@@ -747,7 +881,6 @@ class CameraApp:
         self._active_sources.clear()   # manual override: cancel all external requests
         if self.state == AppState.ARMED:
             self.sync.cmd_recording_ending()
-            # _barcodes_running is not set during ARMED, no reset needed here
             self.state = AppState.IDLE
             self._set_state_label("● IDLE", 'grey')
             self.record_btn.config(state='normal')
@@ -759,7 +892,6 @@ class CameraApp:
                 self.sync.cmd_stop_cam_free()
             elif self.mode == CaptureMode.TRIGGERED:
                 self.sync.cmd_recording_ending()
-                # _recording_finished resets _barcodes_running after writer closes
             self._end_recording()
 
     # --------------------------------------------------- recording lifecycle
@@ -837,10 +969,8 @@ class CameraApp:
 
     def _finish_worker(self):
         """Background: drain queues, close writer, write final metadata."""
-        # Signal capture thread to stop
-        self._stop_event.set()
-        if self._capture_thread:
-            self._capture_thread.join(timeout=5.0)
+        # Signal capture thread to stop AND ensure EndAcquisition is called
+        self._stop_capture_thread()
 
         # Signal save thread - send None sentinel after queue is drained
         if self._write_queue:
@@ -866,11 +996,10 @@ class CameraApp:
         )
         write_metadata(self._filepath, meta)
 
-        # Tell Open Ephys to stop recording — Python is master, OE is slave (AC2.1)
-        # Called after writer closes so the ephys file captures the final barcode
+        # Tell Open Ephys to stop recording
         self.sync.cmd_stop_oe_recording()
 
-        # Restart preview-only capture (init_cam called inside _start_preview_capture)
+        # Restart preview-only capture
         print("_finish_worker: restarting preview capture...")
         self._start_preview_capture()
         print("_finish_worker: preview restarted OK")
@@ -886,6 +1015,7 @@ class CameraApp:
         self.record_btn.config(state='normal')
         self.stop_btn.config(state='disabled')
         self.animal_entry.config(state='normal')
+        self._update_barcode_gui() # Refresh global indicator
         saved = self._frame_stats.get('saved', 0)
         dropped = self._frame_stats.get('dropped', 0)
         self._file_label.config(
