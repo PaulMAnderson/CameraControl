@@ -3,7 +3,8 @@
 
     "rig": {
         "room":   "Juxta 2",
-        "rig_id": "Neuropixels 2.0"
+        "rig_id": "Neuropixels 2.0",
+        "filename_id": "Juxta2"
     },
 
     "paths": {
@@ -20,6 +21,7 @@
     },
 
     "camera": {
+        "label": "Cam1",
         "exposure_us":   1000,
         "gain_db":       22,
         "gamma":         0.5,
