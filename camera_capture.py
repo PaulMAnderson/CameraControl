@@ -265,7 +265,6 @@ def cam_capture_thread(cam, write_queue, preview_queue, frame_stats,
     try:
         # --- PHASE 1: AGGRESSIVE BUFFER FLUSH ---
         # Discard stale frames until the buffer is truly empty.
-        # We loop until GetNextImage times out or we've done it many times.
         for _ in range(20):
             try:
                 image = cam.GetNextImage(50)
@@ -436,7 +435,17 @@ class CameraApp:
         self.barcode_btn = tk.Button(self.global_bar, text="START BARCODES", 
                                      bg='#4CAF50', fg='white', font=('TkDefaultFont', 9, 'bold'),
                                      command=self._toggle_barcodes, padx=10)
-        self.barcode_btn.pack(side='left')
+        self.barcode_btn.pack(side='left', padx=(0, 20))
+
+        self._trigger_dot = tk.Label(self.global_bar, text="●", fg='grey', font=('TkDefaultFont', 12))
+        self._trigger_dot.pack(side='left')
+        self._trigger_label = tk.Label(self.global_bar, text="Triggers: OFF", font=('TkDefaultFont', 9, 'bold'))
+        self._trigger_label.pack(side='left', padx=(0, 10))
+
+        self.stop_triggers_global_btn = tk.Button(self.global_bar, text="STOP TRIGGERS", 
+                                            bg='#f44336', fg='white', font=('TkDefaultFont', 9, 'bold'),
+                                            state='disabled', command=self._stop_hardware_triggers, padx=10)
+        self.stop_triggers_global_btn.pack(side='left')
 
         # ── MAIN CONTENT (Tabs) ───────────────────────────────────────────
         style = ttk.Style()
@@ -526,6 +535,11 @@ class CameraApp:
                                             state='disabled', command=self._start_hardware_triggers)
         self.start_triggers_btn.pack(fill='x', pady=(10, 0))
 
+        self.stop_triggers_btn = tk.Button(ctrl_frame, text="STOP TRIGGERS", 
+                                            bg='#f44336', fg='white', font=('TkDefaultFont', 9, 'bold'),
+                                            state='disabled', command=self._stop_hardware_triggers)
+        self.stop_triggers_btn.pack(fill='x', pady=(5, 0))
+
         # Action Buttons
         btn_frame = tk.Frame(self.rec_sidebar)
         btn_frame.pack(fill='x', pady=(0, 10))
@@ -575,13 +589,47 @@ class CameraApp:
         self.notebook.bind("<<NotebookTabChanged>>", self._on_tab_changed)
         self._on_mode_change()
 
+    # --------------------------------------------------- trigger control
+    def _start_hardware_triggers(self):
+        """Manually or automatically start the Arduino pulses (sends 'R')."""
+        if self.state in (AppState.ARMED, AppState.RECORDING):
+            print("Starting hardware triggers (R)...")
+            self.sync.cmd_recording_active()
+            self._hardware_triggers_started = True
+            
+            # Update UI indicators
+            self._trigger_dot.config(fg='#4CAF50')
+            self._trigger_label.config(text="Triggers: RUNNING")
+            self.start_triggers_btn.config(state='disabled')
+            self.stop_triggers_btn.config(state='normal')
+            self.stop_triggers_global_btn.config(state='normal')
+            
+            # Reset the timer if we are already in the software's RECORDING state
+            if self.state == AppState.RECORDING:
+                self._rec_start = datetime.now()
+                print("Hardware Start Verified: Resetting record timer.")
+
+    def _stop_hardware_triggers(self):
+        """Manually stop the Arduino pulses (sends 'E')."""
+        print("Stopping hardware triggers (E)...")
+        self.sync.cmd_stop_cam_free()
+        self._hardware_triggers_started = False
+        
+        # Update UI indicators
+        self._trigger_dot.config(fg='grey')
+        self._trigger_label.config(text="Triggers: OFF")
+        self.stop_triggers_btn.config(state='disabled')
+        self.stop_triggers_global_btn.config(state='disabled')
+        if self.state in (AppState.ARMED, AppState.RECORDING):
+            self.start_triggers_btn.config(state='normal')
+
     # --------------------------------------------------- tab change handler
     def _on_tab_changed(self, event):
         tab_idx = self.notebook.index(self.notebook.select())
         if tab_idx == 0:
             self.canvas.itemconfigure(self._not_recording_overlay, state='normal')
             if self.sync.arduino_connected:
-                self.sync.cmd_stop_cam_free()
+                self._stop_hardware_triggers()
         else:
             self.canvas.itemconfigure(self._not_recording_overlay, state='hidden')
 
@@ -708,7 +756,7 @@ class CameraApp:
         if self._active_sources:
             return
         if self.state == AppState.RECORDING:
-            self.sync.cmd_stop_cam_free()
+            self._stop_hardware_triggers()
             self._end_recording()
 
     def _on_arduino_event(self, event: str):
@@ -779,6 +827,7 @@ class CameraApp:
         self.record_btn.config(state='disabled')
         self.stop_btn.config(state='normal')
         self.start_triggers_btn.config(state='disabled') # Wait for setup
+        self.stop_triggers_btn.config(state='disabled')
         
         # Start initialization in background to prevent UI freeze
         threading.Thread(target=self._async_begin_recording, daemon=True).start()
@@ -839,31 +888,16 @@ class CameraApp:
 
     def _on_setup_complete(self):
         """Called on main thread once async setup finishes."""
-        # Enable the trigger button as long as we haven't started hardware yet,
-        # even if a ghost frame already pushed us to RECORDING state.
         if self.state in (AppState.ARMED, AppState.RECORDING):
             if not self._hardware_triggers_started:
                 self.start_triggers_btn.config(state='normal')
+                self.stop_triggers_btn.config(state='disabled')
             
             if self.state == AppState.ARMED:
                 self._set_state_label("● ARMED — waiting for trigger...", '#FF9800')
             
             self.animal_entry.config(state='disabled')
             self._file_label.config(text=f"File: {Path(self._filepath).name}", fg='black')
-
-    def _start_hardware_triggers(self):
-        """Manually or automatically start the Arduino pulses (sends 'R')."""
-        if self.state in (AppState.ARMED, AppState.RECORDING):
-            print("Starting hardware triggers (R)...")
-            self.sync.cmd_recording_active()
-            self._hardware_triggers_started = True
-            self.start_triggers_btn.config(state='disabled')
-            
-            # CRITICAL: If we falsely transitioned to RECORDING due to a ghost frame,
-            # reset the timer NOW to the actual hardware start time.
-            if self.state == AppState.RECORDING:
-                self._rec_start = datetime.now()
-                print("Hardware Start Verified: Resetting record timer.")
 
     def _on_record(self):
         """Start FREE RECORD immediately."""
@@ -887,7 +921,7 @@ class CameraApp:
         self._active_sources.clear()
         if self.state in (AppState.ARMED, AppState.RECORDING):
             # Send stop command to Arduino
-            self.sync.cmd_stop_cam_free()
+            self._stop_hardware_triggers()
             
             if self.state == AppState.ARMED:
                 self.state = AppState.IDLE
@@ -902,14 +936,16 @@ class CameraApp:
 
     def _transition_to_recording(self):
         """Called when the first frame arrives (ghost or real)."""
-        if self.state == AppState.ARMED:
+        # CRITICAL FIX: Only transition to RECORDING state if hardware has actually started!
+        if self.state == AppState.ARMED and self._hardware_triggers_started:
             self.state = AppState.RECORDING
             self._rec_start = datetime.now()
             self._set_state_label("● RECORDING", '#f44336')
-            
-            # If the hardware hasn't started, the user still needs the button
-            if not self._hardware_triggers_started:
-                self.start_triggers_btn.config(state='normal')
+            self.start_triggers_btn.config(state='disabled')
+            self.stop_triggers_btn.config(state='normal')
+        elif self.state == AppState.ARMED and not self._hardware_triggers_started:
+            # Ghost frame detected during ARMED phase. Keep ARMED state but show frame.
+            print("Ghost frame ignored (hardware not pulsing yet).")
 
     def _set_tabs_locked(self, locked: bool):
         state = 'disabled' if locked else 'normal'
