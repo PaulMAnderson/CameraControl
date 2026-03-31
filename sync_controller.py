@@ -300,10 +300,7 @@ class SyncController:
             self._oe_thread.join(timeout=3.0)
 
     def cmd_stop_oe_recording(self):
-        """Send HTTP PUT to Open Ephys to stop recording (mode=IDLE).
-        Best-effort: silently swallows errors so caller is not blocked.
-        Call this after the video writer has finished and closed.
-        """
+        """Send HTTP PUT to Open Ephys to stop recording (mode=IDLE)."""
         if not _HAS_URLLIB:
             return
         host = self._cfg['hardware']['open_ephys_host']
@@ -320,6 +317,30 @@ class SyncController:
                 pass
         except Exception:
             pass
+
+    def send_oe_message(self, text: str):
+        """
+        Inject a text message into the Open Ephys event stream.
+        Endpoint: POST /api/messages
+        """
+        if not _HAS_URLLIB:
+            return
+        host = self._cfg['hardware']['open_ephys_host']
+        port = self._cfg['hardware']['open_ephys_port']
+        url  = f"http://{host}:{port}/api/messages"
+        
+        # Open Ephys expected format: just the raw text in the body or a simple JSON?
+        # Standard OE 0.6+ accepts raw text or simple JSON. We'll use raw text for simplicity.
+        try:
+            req = urllib.request.Request(
+                url, data=text.encode('utf-8'),
+                headers={"Content-Type": "text/plain"},
+                method='POST'
+            )
+            with urllib.request.urlopen(req, timeout=1.0):
+                pass
+        except Exception as e:
+            print(f"Warning: Failed to send OE message '{text}': {e}")
 
     def _poll_loop(self):
         host     = self._cfg['hardware']['open_ephys_host']

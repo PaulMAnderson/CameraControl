@@ -305,7 +305,16 @@ def cam_capture_thread(cam, write_queue, preview_queue, frame_stats,
 
             if write_queue is not None:
                 write_queue.put(npimg)
+            
+            captured = frame_stats['captured']
             frame_stats['captured'] += 1
+
+            # Heartbeat every 1 minute (roughly fps * 60 frames)
+            fps = float(cfg['camera']['triggered_fps'])
+            if captured > 0 and captured % int(fps * 60) == 0:
+                if app_ref:
+                    animal = app_ref.animal_id_var.get().strip()
+                    app_ref.sync.send_oe_message(f"Video Heartbeat - Animal: {animal} - Frame: {captured} - {datetime.now().isoformat()}")
 
             try:
                 preview_queue.put_nowait(npimg)
@@ -845,6 +854,9 @@ class CameraApp:
         self.start_triggers_btn.config(state='disabled') # Wait for setup
         self.stop_triggers_btn.config(state='disabled')
         
+        # Send message to Open Ephys
+        self.sync.send_oe_message(f"Video Armed - Animal: {animal} - {datetime.now().isoformat()}")
+        
         # Start initialization in background to prevent UI freeze
         threading.Thread(target=self._async_begin_recording, daemon=True).start()
 
@@ -936,6 +948,9 @@ class CameraApp:
     def _on_stop(self):
         self._active_sources.clear()
         if self.state in (AppState.ARMED, AppState.RECORDING):
+            animal = self.animal_id_var.get().strip()
+            self.sync.send_oe_message(f"Video Stopping - Animal: {animal} - {datetime.now().isoformat()}")
+            
             # Send stop command to Arduino
             self._stop_hardware_triggers()
             
@@ -959,6 +974,9 @@ class CameraApp:
             self._set_state_label("● RECORDING", '#f44336')
             self.start_triggers_btn.config(state='disabled')
             self.stop_triggers_btn.config(state='normal')
+            
+            animal = self.animal_id_var.get().strip()
+            self.sync.send_oe_message(f"Video Start - Frame 1 - Animal: {animal} - {self._rec_start.isoformat()}")
         elif self.state == AppState.ARMED and not self._hardware_triggers_started:
             # Ghost frame detected during ARMED phase. Keep ARMED state but show frame.
             print("Ghost frame ignored (hardware not pulsing yet).")
@@ -1006,6 +1024,13 @@ class CameraApp:
         end_time = datetime.now()
         meta = finalise_metadata(self._metadata, end_time, self._frame_stats.get('captured', 0), self._frame_stats.get('dropped', 0), self._frame_stats.get('saved', 0))
         write_metadata(self._filepath, meta)
+        
+        # Send message to Open Ephys
+        animal = self.animal_id_var.get().strip()
+        captured = self._frame_stats.get('captured', 0)
+        dropped = self._frame_stats.get('dropped', 0)
+        self.sync.send_oe_message(f"Video Capture Complete - Animal: {animal} - Captured: {captured} - Dropped: {dropped} - {end_time.isoformat()}")
+
         if self.oe_stop_var.get():
             time.sleep(1.0)
             self.sync.cmd_stop_oe_recording()
