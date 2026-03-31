@@ -1,4 +1,14 @@
-#include <EEPROM.h>
+// Conditional include for EEPROM (Uno/Mega) or DueFlashStorage (Due)
+#ifdef __has_include
+  #if __has_include(<EEPROM.h>)
+    #include <EEPROM.h>
+    #define HAS_EEPROM
+  #elif __has_include(<DueFlashStorage.h>)
+    #include <DueFlashStorage.h>
+    #define HAS_DUE_FLASH
+    DueFlashStorage dueFlashStorage;
+  #endif
+#endif
 
 /*
   Based in part on code from the: 
@@ -39,9 +49,9 @@ bool camStartPending = false;
 // 'X' command: barcodes finish their current cycle before stopping
 bool barcodeStopPending = false;
 
-// EEPROM addresses
-const int EEPROM_ADDR_BARCODE = 0;
-const int EEPROM_ADDR_CAM     = 1;
+// Memory addresses
+const int ADDR_BARCODE = 0;
+const int ADDR_CAM     = 1;
 
 //////// SETUP Input ////////
 const int ttlPin = 8;
@@ -95,9 +105,14 @@ void setup() {
   Serial.begin(9600);
   Serial.println("Serial Initialised...");
 
-  // Load state from EEPROM
-  runBarcode = EEPROM.read(EEPROM_ADDR_BARCODE) == 1;
-  runCam     = EEPROM.read(EEPROM_ADDR_CAM)     == 1;
+  // Load state from memory if available
+#ifdef HAS_EEPROM
+  runBarcode = EEPROM.read(ADDR_BARCODE) == 1;
+  runCam     = EEPROM.read(ADDR_CAM)     == 1;
+#elif defined(HAS_DUE_FLASH)
+  runBarcode = dueFlashStorage.read(ADDR_BARCODE) == 1;
+  runCam     = dueFlashStorage.read(ADDR_CAM)     == 1;
+#endif
 
   pinMode(barcodePin,       OUTPUT); digitalWrite(barcodePin, LOW);
   pinMode(camPin,           OUTPUT); digitalWrite(camPin,     LOW);
@@ -223,8 +238,13 @@ void loop() {
 // =====================================================================
 
 void saveState() {
-  EEPROM.update(EEPROM_ADDR_BARCODE, runBarcode ? 1 : 0);
-  EEPROM.update(EEPROM_ADDR_CAM,     runCam     ? 1 : 0);
+#ifdef HAS_EEPROM
+  EEPROM.update(ADDR_BARCODE, runBarcode ? 1 : 0);
+  EEPROM.update(ADDR_CAM,     runCam     ? 1 : 0);
+#elif defined(HAS_DUE_FLASH)
+  dueFlashStorage.write(ADDR_BARCODE, runBarcode ? 1 : 0);
+  dueFlashStorage.write(ADDR_CAM,     runCam     ? 1 : 0);
+#endif
 }
 
 void printStatus() {
@@ -373,7 +393,7 @@ void updateBarcode() {
           Serial.println("Camera TTLs started at barcode boundary.");
         }
 
-        // Deferred: stop barcodes at a clean boundary
+        // Deferred: stop barcodes at a boundary
         if (barcodeStopPending) {
           runBarcode         = false;
           saveState();
