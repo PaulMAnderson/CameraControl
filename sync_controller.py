@@ -321,21 +321,21 @@ class SyncController:
     def send_oe_message(self, text: str):
         """
         Inject a text message into the Open Ephys event stream.
-        Endpoint: POST /api/messages
+        Endpoint: PUT /api/message
+        Format: {"text": "your message"}
         """
         if not _HAS_URLLIB:
             return
         host = self._cfg['hardware']['open_ephys_host']
         port = self._cfg['hardware']['open_ephys_port']
-        url  = f"http://{host}:{port}/api/messages"
+        url  = f"http://{host}:{port}/api/message"
         
-        # Open Ephys expected format: just the raw text in the body or a simple JSON?
-        # Standard OE 0.6+ accepts raw text or simple JSON. We'll use raw text for simplicity.
         try:
+            data = _json.dumps({"text": text}).encode('utf-8')
             req = urllib.request.Request(
-                url, data=text.encode('utf-8'),
-                headers={"Content-Type": "text/plain"},
-                method='POST'
+                url, data=data,
+                headers={"Content-Type": "application/json"},
+                method='PUT'
             )
             with urllib.request.urlopen(req, timeout=1.0):
                 pass

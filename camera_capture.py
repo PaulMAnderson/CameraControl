@@ -303,18 +303,16 @@ def cam_capture_thread(cam, write_queue, preview_queue, frame_stats,
             npimg = np.frombuffer(image.GetData(), dtype=np.uint8).reshape(shape).copy()
             image.Release()
 
-            if write_queue is not None:
+            # --- ONLY SAVE IF RECORDING ---
+            if write_queue is not None and app_ref and app_ref.state == AppState.RECORDING:
                 write_queue.put(npimg)
-            
-            captured = frame_stats['captured']
-            frame_stats['captured'] += 1
+                frame_stats['captured'] += 1
 
-            # Heartbeat every 1 minute (roughly fps * 60 frames)
-            fps = float(cfg['camera']['triggered_fps'])
-            if captured > 0 and captured % int(fps * 60) == 0:
-                if app_ref:
+                # Heartbeat every 1 minute (roughly fps * 60 frames)
+                fps = float(cfg['camera']['triggered_fps'])
+                if frame_stats['captured'] > 0 and frame_stats['captured'] % int(fps * 60) == 0:
                     animal = app_ref.animal_id_var.get().strip()
-                    app_ref.sync.send_oe_message(f"Video Heartbeat - Animal: {animal} - Frame: {captured} - {datetime.now().isoformat()}")
+                    app_ref.sync.send_oe_message(f"Video Heartbeat - Animal: {animal} - Frame: {frame_stats['captured']} - {datetime.now().isoformat()}")
 
             try:
                 preview_queue.put_nowait(npimg)
