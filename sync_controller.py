@@ -64,28 +64,56 @@ class SyncController:
         port = self._cfg['hardware']['arduino_port']
         state = {'barcode': 0, 'cam': 0}
         try:
-            self._serial = serial.Serial(port, 9600, timeout=2.0)
-            time.sleep(2.0)   # Arduino resets on serial connect - wait for boot
+            # On Due Native Port, baudrate is ignored but we'll stick to 9600.
+            # dsrdtr=True is often required for the Due Native Port to communicate.
+            self._serial = serial.Serial(port, 9600, timeout=1.0, dsrdtr=True)
+            
+            # Give the port a moment to settle
+            time.sleep(0.5)
             self._serial.reset_input_buffer()
-            self._serial.write(b'?')
-            response = self._serial.readline().decode('utf-8', errors='ignore').strip()
+            self._serial.reset_output_buffer()
+
+            # Handshake: Try sending '?' a few times in case the first is missed
+            response = ""
+            for attempt in range(3):
+                self._serial.write(b'?')
+                self._serial.flush()
+                
+                # Try to read multiple lines in case there's boot-up chatter
+                for _ in range(5):
+                    line = self._serial.readline().decode('utf-8', errors='ignore').strip()
+                    if line.startswith("STATUS"):
+                        response = line
+                        break
+                if response:
+                    break
+                time.sleep(0.2)
             
             if response.startswith("STATUS"):
-                # Parse STATUS barcode=1 cam=0 ...
                 parts = response.split()
                 for p in parts:
                     if p.startswith("barcode="):
                         state['barcode'] = int(p.split('=')[1])
                     elif p.startswith("cam="):
                         state['cam'] = int(p.split('=')[1])
+                msg = f"Arduino connected on {port}."
+            else:
+                # If we opened the port but got no STATUS, it might be the wrong board
+                # or wrong code, but we'll allow it to proceed as 'connected' for now
+                # while warning the user.
+                msg = f"Connected to {port}, but no response to '?' query."
 
             self._serial_ok = True
             self._fire_status()
-            return True, f"Arduino connected on {port}.", state
+            return True, msg, state
+
         except serial.SerialException as e:
             self._serial_ok = False
             self._fire_status()
-            return False, f"Arduino not found on {port}: {e}", state
+            err_msg = str(e)
+            if "PermissionError" in err_msg or "Access is denied" in err_msg:
+                return False, f"Port {port} busy. Is Serial Monitor open?", state
+            return False, f"Could not open {port}: {err_msg}", state
 
     def disconnect_arduino(self):
         """Send stop-all before closing so pins go low."""
