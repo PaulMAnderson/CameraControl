@@ -13,7 +13,7 @@
     },
 
     "hardware": {
-        "arduino_port":      "COM3",
+        "arduino_port":      "COM4",
         "open_ephys_host":   "localhost",
         "open_ephys_port":   37497,
         "open_ephys_poll_interval_ms": 500,
@@ -43,7 +43,7 @@
     },
 
     "gui": {
-        "preview_fps":        15,
+        "preview_fps":        25,
         "default_mode":       "triggered",
         "free_record_fps_options": [25, 50, 100, 200, 400]
     }
