@@ -260,6 +260,7 @@ def cam_capture_thread(cam, write_queue, preview_queue, frame_stats,
             except PySpin.SpinnakerException:
                 if stop_event.is_set():
                     break
+                # ARMED state: timeouts are expected while waiting for trigger
                 frame_stats['timeouts'] += 1
                 continue
 
@@ -874,7 +875,7 @@ class CameraApp:
         try:
             frame = self._preview_queue.get_nowait()
             tab_idx = self.notebook.index(self.notebook.select())
-            if tab_idx == 0:
+            if tab_idx == 0 and self.state == AppState.IDLE:
                 img, photo = Image.fromarray(frame), ImageTk.PhotoImage(Image.fromarray(frame))
                 if self._preview_image_id is None: self._preview_image_id = self.canvas.create_image(0, 0, anchor='nw', image=photo)
                 else: self.canvas.itemconfig(self._preview_image_id, image=photo)
