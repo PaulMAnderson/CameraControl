@@ -110,19 +110,36 @@ def make_metadata_stub(cfg: dict, animal_id: str, mode: CaptureMode,
             "fps":             fps,
             "start_time":      now.isoformat(),
             "end_time":        None,
+            "duration_sec":    None,
             "frames_captured": None,
             "frames_dropped":  None,
+            "frames_saved":    None,
         },
         "rig": {
             "room":           cfg['rig']['room'],
             "rig_id":         cfg['rig']['rig_id'],
+            "version":        cfg['rig'].get('version', 1),
         },
         "video": {
-            "filename":   Path(filepath).name,
-            "camera":     cfg['camera'].get('label', 'Cam1'),
-            "resolution": [cfg['camera']['width'], cfg['camera']['height']],
-            "codec":      cfg['encoding']['codec'],
-            "codec_tag":  cfg['encoding']['codec_tag'],
+            "filename":     Path(filepath).name,
+            "camera_label": cfg['camera'].get('label', 'Cam1'),
+            "camera_id":    cfg['camera'].get('camera_id', 'Unknown'),
+            "resolution":   [cfg['camera']['width'], cfg['camera']['height']],
+            "fps":          fps,
+            "codec":        cfg['encoding']['codec'],
+            "codec_tag":    cfg['encoding']['codec_tag'],
+        },
+        "processing": {
+            "is_fixed": False,
+            "is_split": False,
+            "source_file": None,
+            "history": []
+        },
+        "sync": {
+            "status": None,
+            "drift_ms": None,
+            "start_sample": None,
+            "end_sample": None
         }
     }
 
@@ -130,10 +147,13 @@ def make_metadata_stub(cfg: dict, animal_id: str, mode: CaptureMode,
 def finalise_metadata(stub: dict, end_time: datetime, frames_captured: int,
                        frames_dropped: int, frames_saved: int) -> dict:
     """Fill in end-of-recording fields and mark status complete."""
+    start = datetime.fromisoformat(stub['recording']['start_time'])
     stub['status'] = 'complete'
     stub['recording']['end_time']       = end_time.isoformat()
+    stub['recording']['duration_sec']   = round((end_time - start).total_seconds(), 3)
     stub['recording']['frames_captured'] = frames_captured
     stub['recording']['frames_dropped']  = frames_dropped
+    stub['recording']['frames_saved']    = frames_saved
     return stub
 
 
@@ -900,14 +920,16 @@ class CameraApp:
 
     # --------------------------------------------------- recording lifecycle
     def _make_filepath(self, animal: str) -> str:
-        """New pattern: {Animal} {Date}_{Time} {Rig}_{CameraLabel}.mp4"""
+        """New pattern: {Animal} {Date}_{Time} {RigID}-v{Version}_{CameraLabel}.mp4"""
         now      = datetime.now()
         date_str = now.strftime("%Y-%m-%d")
         time_str = now.strftime("%H-%M-%S")
-        rig_id   = self.cfg['rig'].get('filename_id', 'Rig')
+        
+        rig_id   = self.cfg['rig'].get('rig_id', 'Rig')
+        version  = self.cfg['rig'].get('version', 1)
         cam_lbl  = self.cfg['camera'].get('label', 'Cam1')
         
-        filename = f"{animal} {date_str}_{time_str} {rig_id}_{cam_lbl}.mp4"
+        filename = f"{animal} {date_str}_{time_str} {rig_id}-v{version}_{cam_lbl}.mp4"
         
         folder   = Path(self.cfg['paths']['save_folder']) / animal
         folder.mkdir(parents=True, exist_ok=True)

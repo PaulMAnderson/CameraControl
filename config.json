@@ -3,8 +3,8 @@
 
     "rig": {
         "room":   "Juxta 2",
-        "rig_id": "Neuropixels 2.0",
-        "filename_id": "Juxta2"
+        "rig_id": "Juxta2-OpenEphys",
+        "version": 1
     },
 
     "paths": {
@@ -21,6 +21,7 @@
     },
 
     "camera": {
+        "camera_id": "BFS-U3-04S2M-C",
         "label": "Cam1",
         "exposure_us":   1000,
         "gain_db":       22,
