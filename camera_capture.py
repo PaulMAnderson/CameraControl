@@ -253,16 +253,15 @@ def cam_capture_thread(cam, write_queue, preview_queue, frame_stats,
     last_id = -1
 
     try:
-        # --- PHASE 1: BUFFER FLUSH ---
-        # Discard stale frames for ~500ms to ensure we are waiting for FRESH triggers
-        flush_start = time.time()
-        while time.time() - flush_start < 0.5:
+        # --- PHASE 1: AGGRESSIVE BUFFER FLUSH ---
+        # Discard stale frames until the buffer is truly empty.
+        # We loop until GetNextImage times out or we've done it many times.
+        for _ in range(20):
             try:
-                # Use a very short timeout for flushing
-                image = cam.GetNextImage(100)
+                image = cam.GetNextImage(50)
                 image.Release()
             except PySpin.SpinnakerException:
-                break # Buffer empty or camera not pulsing yet (expected)
+                break
         
         # Now we are truly ready
         ready_event.set()
@@ -363,6 +362,7 @@ class CameraApp:
         self._filepath     = None
         self._metadata     = None
         self._rec_start    = None
+        self._hardware_triggers_started = False
 
         self._active_sources   = set()
         self._barcodes_running = False
@@ -674,10 +674,10 @@ class CameraApp:
             return
         if self.mode != CaptureMode.TRIGGERED:
             return
-        if self.state == AppState.ARMED:
+        # If we are ARMED or already recorded (due to ghost frames), START hardware!
+        if not self._hardware_triggers_started:
             self._start_hardware_triggers()
-        elif self.state == AppState.RECORDING:
-            self._active_sources.add('oe')
+        self._active_sources.add('oe')
 
     def _oe_record_stopped(self):
         """Open Ephys just stopped recording."""
@@ -689,7 +689,7 @@ class CameraApp:
 
     # --------------------------------------------------- OR Logic trigger routing
     def _trigger_start(self, source: str):
-        if self.state == AppState.ARMED:
+        if not self._hardware_triggers_started:
             self._start_hardware_triggers()
         self._active_sources.add(source)
 
@@ -705,7 +705,7 @@ class CameraApp:
         if event == 'CAM_BUTTON':
             if not self.ctrl_button_var.get():
                 return
-            if self.state == AppState.ARMED:
+            if not self._hardware_triggers_started:
                 self._start_hardware_triggers()
             elif self.state == AppState.RECORDING:
                 self._trigger_stop('button')
@@ -737,10 +737,9 @@ class CameraApp:
             return
         if self.mode != CaptureMode.TRIGGERED:
             return
-        if self.state == AppState.ARMED:
+        if not self._hardware_triggers_started:
             self._start_hardware_triggers()
-        elif self.state == AppState.RECORDING:
-            self._active_sources.add('matlab')
+        self._active_sources.add('matlab')
 
     def _matlab_stopped(self):
         if not self.ctrl_matlab_var.get():
@@ -763,6 +762,7 @@ class CameraApp:
         # Lock tabs immediately
         self._set_tabs_locked(True)
         self.state = AppState.ARMED
+        self._hardware_triggers_started = False
         self._set_state_label("● SETTING UP CAMERA...", '#FF9800')
         
         self.arm_btn.config(state='disabled')
@@ -837,11 +837,17 @@ class CameraApp:
 
     def _start_hardware_triggers(self):
         """Manually or automatically start the Arduino pulses (sends 'R')."""
-        # Allow triggers even if software has already falsely transitioned to RECORDING
         if self.state in (AppState.ARMED, AppState.RECORDING):
             print("Starting hardware triggers (R)...")
             self.sync.cmd_recording_active()
+            self._hardware_triggers_started = True
             self.start_triggers_btn.config(state='disabled')
+            
+            # CRITICAL: If we falsely transitioned to RECORDING due to a ghost frame,
+            # reset the timer NOW to the actual hardware start time.
+            if self.state == AppState.RECORDING:
+                self._rec_start = datetime.now()
+                print("Hardware Start Verified: Resetting record timer.")
 
     def _on_record(self):
         """Start FREE RECORD immediately."""
@@ -863,20 +869,20 @@ class CameraApp:
 
     def _on_stop(self):
         self._active_sources.clear()
-        if self.state == AppState.ARMED:
+        if self.state in (AppState.ARMED, AppState.RECORDING):
+            # Send stop command to Arduino
             self.sync.cmd_stop_cam_free()
-            self.state = AppState.IDLE
-            self._set_state_label("● IDLE", 'grey')
-            self._on_mode_change()
-            self.stop_btn.config(state='disabled')
-            self.start_triggers_btn.config(state='disabled')
-            self._set_tabs_locked(False)
-            self.animal_entry.config(state='normal')
-            return
-
-        if self.state == AppState.RECORDING:
-            self.sync.cmd_stop_cam_free()
-            self._end_recording()
+            
+            if self.state == AppState.ARMED:
+                self.state = AppState.IDLE
+                self._set_state_label("● IDLE", 'grey')
+                self._on_mode_change()
+                self.stop_btn.config(state='disabled')
+                self.start_triggers_btn.config(state='disabled')
+                self._set_tabs_locked(False)
+                self.animal_entry.config(state='normal')
+            else:
+                self._end_recording()
 
     def _transition_to_recording(self):
         if self.state == AppState.ARMED:
