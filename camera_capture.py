@@ -506,53 +506,109 @@ class CameraApp:
         tk.Checkbutton(ctrl_frame, text="Matlab Commands", variable=self.ctrl_matlab_var).pack(anchor='w')
         tk.Checkbutton(ctrl_frame, text="Hardware Button", variable=self.ctrl_button_var).pack(anchor='w')
 
-        # Stats and Video Area (Middle)
-        mid_frame = tk.Frame(self.tab_record)
-        mid_frame.pack(fill='both', expand=True, pady=10)
+        # ── TAB 2: RECORD ─────────────────────────────────────────────────
+        self.tab_record = tk.Frame(self.notebook, padx=12, pady=12)
+        self.notebook.add(self.tab_record, text="  RECORDING  ")
 
-        # Stats Area (Left)
-        stats_sub = tk.LabelFrame(mid_frame, text=" Statistics ", padx=10, pady=10)
-        stats_sub.pack(side='left', fill='y')
+        # Main horizontal layout: Left sidebar for controls, Right for large canvas
+        self.rec_sidebar = tk.Frame(self.tab_record, width=300)
+        self.rec_sidebar.pack(side='left', fill='y', padx=(0, 15))
+        
+        self.rec_monitor_frame = tk.Frame(self.tab_record, bg='black', relief='sunken', borderwidth=2)
+        self.rec_monitor_frame.pack(side='left', fill='both', expand=True)
 
-        self._stat_frame_lbl   = tk.Label(stats_sub, text="Frame:   0",   anchor='w', width=20)
-        self._stat_elapsed_lbl = tk.Label(stats_sub, text="Elapsed: --",  anchor='w', width=20)
-        self._stat_dropped_lbl = tk.Label(stats_sub, text="Dropped: 0",   anchor='w', width=20)
-        self._stat_queue_lbl   = tk.Label(stats_sub, text="Write queue: 0", anchor='w', width=20)
+        # -- Right Side: Full Size Monitor --
+        self.record_canvas = tk.Canvas(self.rec_monitor_frame, width=w, height=h, 
+                                       bg='black', highlightthickness=0)
+        self.record_canvas.pack(expand=True)
+        self._record_preview_image_id = None
+
+        # -- Left Side: Sidebar Content --
+        
+        # 1. Config Frame
+        config_frame = tk.LabelFrame(self.rec_sidebar, text=" Configuration ", padx=10, pady=10)
+        config_frame.pack(fill='x', pady=(0, 10))
+
+        tk.Label(config_frame, text="Animal ID:").grid(row=0, column=0, sticky='w')
+        self.animal_id_var = tk.StringVar()
+        self.animal_entry = tk.Entry(config_frame, textvariable=self.animal_id_var, width=20)
+        self.animal_entry.grid(row=0, column=1, sticky='w', padx=(5, 0))
+
+        tk.Label(config_frame, text="Mode:").grid(row=1, column=0, sticky='w', pady=(10, 0))
+        self.mode_var = tk.StringVar(value=self.mode.value)
+        self.rb_triggered = tk.Radiobutton(config_frame, text="Triggered", variable=self.mode_var,
+                                           value=CaptureMode.TRIGGERED.value, command=self._on_mode_change)
+        self.rb_triggered.grid(row=1, column=1, sticky='w', pady=(10, 0))
+        self.rb_free = tk.Radiobutton(config_frame, text="Free Record", variable=self.mode_var,
+                                      value=CaptureMode.FREE_RECORD.value, command=self._on_mode_change)
+        self.rb_free.grid(row=2, column=1, sticky='w')
+
+        # FPS Selection
+        fps_frame = tk.Frame(config_frame)
+        fps_frame.grid(row=3, column=0, columnspan=2, sticky='w', pady=(5, 0))
+        tk.Label(fps_frame, text="FPS:").pack(side='left')
+        self.fps_var = tk.StringVar(value=str(self.cfg['camera']['triggered_fps']))
+        fps_opts = [str(x) for x in self.cfg['gui']['free_record_fps_options']]
+        self.fps_menu = ttk.Combobox(fps_frame, textvariable=self.fps_var,
+                                     values=fps_opts, width=6, state='disabled')
+        self.fps_menu.pack(side='left', padx=4)
+        self.fps_note = tk.Label(fps_frame, text="(set on Arduino)", fg='grey', font=('TkDefaultFont', 8))
+        self.fps_note.pack(side='left')
+
+        # 2. Control Frame
+        ctrl_frame = tk.LabelFrame(self.rec_sidebar, text=" External Triggers ", padx=10, pady=10)
+        ctrl_frame.pack(fill='x', pady=(0, 10))
+
+        self.ctrl_oe_var = tk.BooleanVar(value=True)
+        self.ctrl_matlab_var = tk.BooleanVar(value=True)
+        self.ctrl_button_var = tk.BooleanVar(value=True)
+
+        tk.Checkbutton(ctrl_frame, text="Monitor Open Ephys", variable=self.ctrl_oe_var).pack(anchor='w')
+        tk.Checkbutton(ctrl_frame, text="Matlab Commands", variable=self.ctrl_matlab_var).pack(anchor='w')
+        tk.Checkbutton(ctrl_frame, text="Hardware Button", variable=self.ctrl_button_var).pack(anchor='w')
+
+        # 3. Action Buttons
+        btn_frame = tk.Frame(self.rec_sidebar)
+        btn_frame.pack(fill='x', pady=(0, 10))
+
+        self.arm_btn = tk.Button(btn_frame, text="ARM", width=8, height=2,
+                                 bg='#FF9800', fg='white', font=('TkDefaultFont', 10, 'bold'),
+                                 command=self._on_arm)
+        self.arm_btn.pack(side='left', padx=2, expand=True, fill='x')
+
+        self.record_btn = tk.Button(btn_frame, text="RECORD", width=8, height=2,
+                                    bg='#4CAF50', fg='white', font=('TkDefaultFont', 10, 'bold'),
+                                    command=self._on_record)
+        self.record_btn.pack(side='left', padx=2, expand=True, fill='x')
+
+        self.stop_btn = tk.Button(btn_frame, text="STOP", width=8, height=2,
+                                  bg='#f44336', fg='white', font=('TkDefaultFont', 10, 'bold'),
+                                  state='disabled', command=self._on_stop)
+        self.stop_btn.pack(side='left', padx=2, expand=True, fill='x')
+
+        # OE Stop Checkbox
+        self.oe_stop_var = tk.BooleanVar(value=True)
+        tk.Checkbutton(self.rec_sidebar, text="Stop Open Ephys on Stop", 
+                       variable=self.oe_stop_var, font=('TkDefaultFont', 9)).pack(anchor='w')
+
+        # 4. Statistics
+        stats_sub = tk.LabelFrame(self.rec_sidebar, text=" Statistics ", padx=10, pady=10)
+        stats_sub.pack(fill='x', pady=10)
+
+        self._stat_frame_lbl   = tk.Label(stats_sub, text="Frame:   0",   anchor='w')
+        self._stat_elapsed_lbl = tk.Label(stats_sub, text="Elapsed: --",  anchor='w')
+        self._stat_dropped_lbl = tk.Label(stats_sub, text="Dropped: 0",   anchor='w')
+        self._stat_queue_lbl   = tk.Label(stats_sub, text="Write queue: 0", anchor='w')
         
         self._stat_frame_lbl.grid(row=0, column=0, sticky='w')
         self._stat_elapsed_lbl.grid(row=1, column=0, sticky='w')
         self._stat_dropped_lbl.grid(row=2, column=0, sticky='w')
         self._stat_queue_lbl.grid(row=3, column=0, sticky='w')
 
-        # Recording Video Canvas (Right)
-        self.record_canvas_frame = tk.Frame(mid_frame, bg='black', relief='sunken', borderwidth=2)
-        self.record_canvas_frame.pack(side='left', padx=(10, 0), fill='both', expand=True)
-        
-        # We'll use a smaller preview for the record tab to keep the window size sane, 
-        # or scale it. For now, let's use the same size but it only shows during record.
-        self.record_canvas = tk.Canvas(self.record_canvas_frame, width=w//2, height=h//2, 
-                                       bg='black', highlightthickness=0)
-        self.record_canvas.pack(expand=True)
-        self._record_preview_image_id = None
-
-        # Bottom area: Action Buttons
-        action_frame = tk.Frame(self.tab_record, pady=10)
-        action_frame.pack(fill='x')
-
-        self.record_btn = tk.Button(action_frame, text="RECORD", width=20, height=2,
-                                    bg='#4CAF50', fg='white', font=('TkDefaultFont', 12, 'bold'),
-                                    command=self._on_record)
-        self.record_btn.pack(side='left', padx=(0, 10))
-
-        self.stop_btn = tk.Button(action_frame, text="STOP", width=20, height=2,
-                                  bg='#f44336', fg='white', font=('TkDefaultFont', 12, 'bold'),
-                                  state='disabled', command=self._on_stop)
-        self.stop_btn.pack(side='left')
-
-        # File path label
-        self._file_label = tk.Label(self.tab_record, text="File: --", anchor='w',
+        # 5. File path label
+        self._file_label = tk.Label(self.rec_sidebar, text="File: --", anchor='w',
                                     fg='grey', font=('TkDefaultFont', 9),
-                                    wraplength=600, justify='left')
+                                    wraplength=280, justify='left')
         self._file_label.pack(fill='x', pady=(10, 0))
 
         # Global State label (bottom)
@@ -575,7 +631,6 @@ class CameraApp:
                 self.sync.cmd_stop_cam_free()
         else: # Record Tab
             self.canvas.itemconfigure(self._not_recording_overlay, state='hidden')
-            # No automatic start here anymore, user can toggle barcodes globally
 
     # --------------------------------------------------- mode change handler
     def _on_mode_change(self):
@@ -584,10 +639,17 @@ class CameraApp:
             self.fps_menu.config(state='readonly')
             self.fps_note.config(text="")
             self.fps_var.set(str(self.cfg['gui']['free_record_fps_options'][-1]))
-        else:
+            self.arm_btn.config(state='disabled')
+            self.record_btn.config(state='normal')
+        elif self.mode == CaptureMode.TRIGGERED:
             self.fps_menu.config(state='disabled')
             self.fps_note.config(text="(set on Arduino)")
             self.fps_var.set(str(self.cfg['camera']['triggered_fps']))
+            self.arm_btn.config(state='normal')
+            self.record_btn.config(state='disabled')
+        else: # View Only
+            self.arm_btn.config(state='disabled')
+            self.record_btn.config(state='disabled')
 
     # --------------------------------------------------- camera init
     def _init_camera(self):
