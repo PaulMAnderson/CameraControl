@@ -829,9 +829,15 @@ class CameraApp:
 
     def _on_setup_complete(self):
         """Called on main thread once async setup finishes."""
-        if self.state == AppState.ARMED:
-            self._set_state_label("● ARMED — waiting for trigger...", '#FF9800')
-            self.start_triggers_btn.config(state='normal')
+        # Enable the trigger button as long as we haven't started hardware yet,
+        # even if a ghost frame already pushed us to RECORDING state.
+        if self.state in (AppState.ARMED, AppState.RECORDING):
+            if not self._hardware_triggers_started:
+                self.start_triggers_btn.config(state='normal')
+            
+            if self.state == AppState.ARMED:
+                self._set_state_label("● ARMED — waiting for trigger...", '#FF9800')
+            
             self.animal_entry.config(state='disabled')
             self._file_label.config(text=f"File: {Path(self._filepath).name}", fg='black')
 
@@ -885,10 +891,15 @@ class CameraApp:
                 self._end_recording()
 
     def _transition_to_recording(self):
+        """Called when the first frame arrives (ghost or real)."""
         if self.state == AppState.ARMED:
             self.state = AppState.RECORDING
             self._rec_start = datetime.now()
             self._set_state_label("● RECORDING", '#f44336')
+            
+            # If the hardware hasn't started, the user still needs the button
+            if not self._hardware_triggers_started:
+                self.start_triggers_btn.config(state='normal')
 
     def _set_tabs_locked(self, locked: bool):
         state = 'disabled' if locked else 'normal'
@@ -905,35 +916,6 @@ class CameraApp:
         folder   = Path(self.cfg['paths']['save_folder']) / animal
         folder.mkdir(parents=True, exist_ok=True)
         return str(folder / f"{animal}_{date_str}{time_str}.mp4")
-
-    def _begin_recording(self):
-        animal   = self.animal_id_var.get().strip()
-        fps      = int(self.fps_var.get())
-        filepath = self._make_filepath(animal)
-        self._filepath    = filepath
-        self._metadata    = make_metadata_stub(self.cfg, animal, self.mode, fps, filepath)
-        write_metadata(filepath, self._metadata)
-        self._stop_capture_thread()
-        triggered = (self.mode == CaptureMode.TRIGGERED)
-        init_cam(self._cam, self.cfg, fps, triggered, enable_output=True)
-        self._write_queue = queue.Queue()
-        self._reset_frame_stats()
-        self._stop_event.clear()
-        self._ready_event.clear()
-        self._writer = make_writer(filepath, self.cfg, fps)
-        save_stop = threading.Event()
-        self._save_stop_event = save_stop
-        self._save_thread = threading.Thread(target=save_thread_func, args=(self._write_queue, self._writer, self._frame_stats, save_stop), daemon=True)
-        self._save_thread.start()
-        self._cam.BeginAcquisition()
-        self._capture_thread = threading.Thread(target=cam_capture_thread, args=(self._cam, self._write_queue, self._preview_queue, self._frame_stats, self._stop_event, self._ready_event, self.cfg, self), daemon=True)
-        self._capture_thread.start()
-        self._ready_event.wait(timeout=3.0)
-        self.arm_btn.config(state='disabled')
-        self.record_btn.config(state='disabled')
-        self.stop_btn.config(state='normal')
-        self.animal_entry.config(state='disabled')
-        self._file_label.config(text=f"File: {Path(filepath).name}", fg='black')
 
     def _end_recording(self):
         self.state = AppState.FINISHING
