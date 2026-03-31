@@ -28,13 +28,10 @@ from enum import Enum, auto
 from pathlib import Path
 
 # ------------------------------------------------------------------ logging
-# Redirect stdout/stderr to a log file BEFORE any other imports, so even
-# import errors and missing-package crashes are captured.
-# Log is written next to this script as: camera_capture.log
 _LOG_PATH = Path(__file__).parent / "camera_capture.log"
 
 def _setup_logging():
-    log = open(_LOG_PATH, 'w', buffering=1)  # line-buffered: writes land immediately
+    log = open(_LOG_PATH, 'w', buffering=1)
     sys.stdout = log
     sys.stderr = log
     print(f"=== camera_capture starting {datetime.now().isoformat()} ===")
@@ -62,7 +59,6 @@ print("  PySpin OK")
 
 print("Importing skvideo...")
 import skvideo
-# ffmpeg path set after config load (see load_config)
 import skvideo.io
 print("  skvideo OK")
 
@@ -97,7 +93,6 @@ def load_config() -> dict:
         sys.exit(1)
     with open(CONFIG_PATH, 'r') as f:
         cfg = json.load(f)
-    # Set ffmpeg path before skvideo is used
     skvideo.setFFmpegPath(cfg['paths']['ffmpeg_path'])
     return cfg
 
@@ -329,7 +324,7 @@ def save_thread_func(write_queue, writer, frame_stats, stop_event):
 # ================================================================= main GUI
 class CameraApp:
 
-    PREVIEW_INTERVAL_MS = 40   # 25 fps preview update
+    PREVIEW_INTERVAL_MS = 40
 
     def __init__(self, root: tk.Tk, cfg: dict):
         self.root  = root
@@ -337,12 +332,10 @@ class CameraApp:
         self.state = AppState.IDLE
         self.mode  = CaptureMode[self.cfg['gui']['default_mode'].upper()]
 
-        # Camera handles
         self._spin_system  = None
         self._cam_list     = None
         self._cam          = None
 
-        # Threading
         self._capture_thread = None
         self._save_thread    = None
         self._write_queue    = None
@@ -351,17 +344,14 @@ class CameraApp:
         self._ready_event    = threading.Event()
         self._frame_stats    = {}
 
-        # Recording state
         self._writer       = None
         self._filepath     = None
         self._metadata     = None
         self._rec_start    = None
 
-        # OR Logic: sources with active start requests
         self._active_sources   = set()
-        self._barcodes_running = False    # mirrors Arduino barcode state for button toggle
+        self._barcodes_running = False
 
-        # Sync
         self.sync = SyncController(cfg, tk_root=root)
 
         print("Building GUI...")
@@ -376,6 +366,7 @@ class CameraApp:
         if self.sync.arduino_connected:
             self.sync.start_serial_reader(on_arduino_event=self._on_arduino_event)
             print("SerialReaderThread started")
+        
         print("Starting OE polling and UDP listener...")
         self.sync.start_polling(
             on_record_start=self._oe_record_started,
@@ -388,10 +379,7 @@ class CameraApp:
         )
         print("OE polling and UDP listener started")
 
-        # Start preview loop
         self.root.after(self.PREVIEW_INTERVAL_MS, self._update_preview)
-
-        # Safe shutdown on window close
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
         atexit.register(self._cleanup)
         print("CameraApp __init__ complete")
@@ -405,19 +393,16 @@ class CameraApp:
         self.global_bar = tk.Frame(self.root, padx=12, pady=8, relief='groove', borderwidth=1)
         self.global_bar.pack(fill='x', side='top')
 
-        # Arduino Status
         self._ard_dot   = tk.Label(self.global_bar, text="●", fg='grey', font=('TkDefaultFont', 12))
         self._ard_dot.pack(side='left')
         self._ard_label = tk.Label(self.global_bar, text="Arduino: Disconnected", font=('TkDefaultFont', 9, 'bold'))
         self._ard_label.pack(side='left', padx=(0, 20))
 
-        # Open Ephys Status
         self._oe_dot    = tk.Label(self.global_bar, text="●", fg='grey', font=('TkDefaultFont', 12))
         self._oe_dot.pack(side='left')
         self._oe_label  = tk.Label(self.global_bar, text="Open Ephys: ???", font=('TkDefaultFont', 9, 'bold'))
         self._oe_label.pack(side='left', padx=(0, 20))
 
-        # Barcode Status & Toggle
         self._barcode_dot = tk.Label(self.global_bar, text="●", fg='grey', font=('TkDefaultFont', 12))
         self._barcode_dot.pack(side='left')
         self._barcode_label = tk.Label(self.global_bar, text="Barcodes: OFF", font=('TkDefaultFont', 9, 'bold'))
@@ -459,22 +444,18 @@ class CameraApp:
         self.tab_record = tk.Frame(self.notebook, padx=12, pady=12)
         self.notebook.add(self.tab_record, text="  RECORDING  ")
 
-        # Main horizontal layout: Left sidebar for controls, Right for large canvas
         self.rec_sidebar = tk.Frame(self.tab_record, width=300)
         self.rec_sidebar.pack(side='left', fill='y', padx=(0, 15))
         
         self.rec_monitor_frame = tk.Frame(self.tab_record, bg='black', relief='sunken', borderwidth=2)
         self.rec_monitor_frame.pack(side='left', fill='both', expand=True)
 
-        # -- Right Side: Full Size Monitor --
         self.record_canvas = tk.Canvas(self.rec_monitor_frame, width=w, height=h, 
                                        bg='black', highlightthickness=0)
         self.record_canvas.pack(expand=True)
         self._record_preview_image_id = None
 
-        # -- Left Side: Sidebar Content --
-        
-        # 1. Config Frame
+        # Sidebar Content
         config_frame = tk.LabelFrame(self.rec_sidebar, text=" Configuration ", padx=10, pady=10)
         config_frame.pack(fill='x', pady=(0, 10))
 
@@ -492,7 +473,6 @@ class CameraApp:
                                       value=CaptureMode.FREE_RECORD.value, command=self._on_mode_change)
         self.rb_free.grid(row=2, column=1, sticky='w')
 
-        # FPS Selection
         fps_frame = tk.Frame(config_frame)
         fps_frame.grid(row=3, column=0, columnspan=2, sticky='w', pady=(5, 0))
         tk.Label(fps_frame, text="FPS:").pack(side='left')
@@ -504,8 +484,8 @@ class CameraApp:
         self.fps_note = tk.Label(fps_frame, text="(set on Arduino)", fg='grey', font=('TkDefaultFont', 8))
         self.fps_note.pack(side='left')
 
-        # 2. Control Frame
-        ctrl_frame = tk.LabelFrame(self.rec_sidebar, text=" External Triggers ", padx=10, pady=10)
+        # Triggers panel
+        ctrl_frame = tk.LabelFrame(self.rec_sidebar, text=" Triggers ", padx=10, pady=10)
         ctrl_frame.pack(fill='x', pady=(0, 10))
 
         self.ctrl_oe_var = tk.BooleanVar(value=True)
@@ -516,7 +496,12 @@ class CameraApp:
         tk.Checkbutton(ctrl_frame, text="Matlab Commands", variable=self.ctrl_matlab_var).pack(anchor='w')
         tk.Checkbutton(ctrl_frame, text="Hardware Button", variable=self.ctrl_button_var).pack(anchor='w')
 
-        # 3. Action Buttons
+        self.start_triggers_btn = tk.Button(ctrl_frame, text="START TRIGGERS", 
+                                            bg='#2196F3', fg='white', font=('TkDefaultFont', 9, 'bold'),
+                                            state='disabled', command=self._start_hardware_triggers)
+        self.start_triggers_btn.pack(fill='x', pady=(10, 0))
+
+        # Action Buttons
         btn_frame = tk.Frame(self.rec_sidebar)
         btn_frame.pack(fill='x', pady=(0, 10))
 
@@ -535,12 +520,11 @@ class CameraApp:
                                   state='disabled', command=self._on_stop)
         self.stop_btn.pack(side='left', padx=2, expand=True, fill='x')
 
-        # OE Stop Checkbox
         self.oe_stop_var = tk.BooleanVar(value=True)
         tk.Checkbutton(self.rec_sidebar, text="Stop Open Ephys on Stop", 
                        variable=self.oe_stop_var, font=('TkDefaultFont', 9)).pack(anchor='w')
 
-        # 4. Statistics
+        # Statistics and File
         stats_sub = tk.LabelFrame(self.rec_sidebar, text=" Statistics ", padx=10, pady=10)
         stats_sub.pack(fill='x', pady=10)
 
@@ -554,31 +538,26 @@ class CameraApp:
         self._stat_dropped_lbl.grid(row=2, column=0, sticky='w')
         self._stat_queue_lbl.grid(row=3, column=0, sticky='w')
 
-        # 5. File path label
         self._file_label = tk.Label(self.rec_sidebar, text="File: --", anchor='w',
                                     fg='grey', font=('TkDefaultFont', 9),
                                     wraplength=280, justify='left')
         self._file_label.pack(fill='x', pady=(10, 0))
 
-        # Global State label (bottom)
         self._state_label = tk.Label(self.root, text="● IDLE",
                                      font=('TkDefaultFont', 10, 'bold'), anchor='w', fg='grey', padx=10, pady=5)
         self._state_label.pack(fill='x', side='bottom')
 
-        # Bind tab change
         self.notebook.bind("<<NotebookTabChanged>>", self._on_tab_changed)
-
         self._on_mode_change()
 
     # --------------------------------------------------- tab change handler
     def _on_tab_changed(self, event):
         tab_idx = self.notebook.index(self.notebook.select())
-        if tab_idx == 0: # Preview Tab
+        if tab_idx == 0:
             self.canvas.itemconfigure(self._not_recording_overlay, state='normal')
-            # Disable camera pulses but leave barcodes alone
             if self.sync.arduino_connected:
                 self.sync.cmd_stop_cam_free()
-        else: # Record Tab
+        else:
             self.canvas.itemconfigure(self._not_recording_overlay, state='hidden')
 
     # --------------------------------------------------- mode change handler
@@ -590,15 +569,18 @@ class CameraApp:
             self.fps_var.set(str(self.cfg['gui']['free_record_fps_options'][-1]))
             self.arm_btn.config(state='disabled')
             self.record_btn.config(state='normal')
+            self.start_triggers_btn.config(state='disabled')
         elif self.mode == CaptureMode.TRIGGERED:
             self.fps_menu.config(state='disabled')
             self.fps_note.config(text="(set on Arduino)")
             self.fps_var.set(str(self.cfg['camera']['triggered_fps']))
             self.arm_btn.config(state='normal')
             self.record_btn.config(state='disabled')
+            self.start_triggers_btn.config(state='disabled')
         else: # View Only
             self.arm_btn.config(state='disabled')
             self.record_btn.config(state='disabled')
+            self.start_triggers_btn.config(state='disabled')
 
     # --------------------------------------------------- camera init
     def _init_camera(self):
@@ -611,34 +593,25 @@ class CameraApp:
             self._cam = self._cam_list[0]
             fps = self.cfg['camera']['triggered_fps']
             triggered = (self.mode == CaptureMode.TRIGGERED)
-            # Initialise with configured FPS and no output initially
             init_cam(self._cam, self.cfg, fps, triggered, enable_output=False)
-            self._update_barcode_gui() # Initial state refresh
+            self._update_barcode_gui()
             self._start_preview_capture()
         except Exception as e:
             messagebox.showerror("Camera Error", f"Failed to initialise camera:\n{e}")
             sys.exit(1)
 
     def _start_preview_capture(self):
-        """Start the capture thread in free-run mode (preview only, no writer).
-        Always free-run regardless of selected mode so preview works without TTLs."""
-        print("_start_preview_capture: configuring camera for free-run preview...")
-        
-        # Ensure acquisition is stopped before reconfiguring
         try:
             if self._cam.IsStreaming():
                 self._cam.EndAcquisition()
         except:
             pass
-
         fps = self.cfg['camera']['triggered_fps']
         init_cam(self._cam, self.cfg, fps, triggered=False, enable_output=False)
         self._reset_frame_stats()
         self._stop_event.clear()
         self._ready_event.clear()
-        print("_start_preview_capture: BeginAcquisition...")
         self._cam.BeginAcquisition()
-        print("_start_preview_capture: starting capture thread...")
         self._capture_thread = threading.Thread(
             target=cam_capture_thread,
             args=(self._cam, None, self._preview_queue,
@@ -647,22 +620,16 @@ class CameraApp:
         )
         self._capture_thread.start()
         self._ready_event.wait(timeout=3.0)
-        print("_start_preview_capture: capture thread ready")
 
     def _stop_capture_thread(self):
-        print("_stop_capture_thread: signalling stop...")
         self._stop_event.set()
         if self._capture_thread and self._capture_thread.is_alive():
             self._capture_thread.join(timeout=5.0)
-        print("_stop_capture_thread: capture thread stopped, ending acquisition...")
         try:
             if self._cam and self._cam.IsStreaming():
                 self._cam.EndAcquisition()
-                print("_stop_capture_thread: EndAcquisition OK")
-        except PySpin.SpinnakerException as e:
-            print(f"_stop_capture_thread: EndAcquisition skipped ({e})")
-        except Exception as e:
-            print(f"_stop_capture_thread: EndAcquisition error ({e})")
+        except Exception:
+            pass
 
     # --------------------------------------------------- Arduino connect
     def _connect_arduino(self):
@@ -682,62 +649,55 @@ class CameraApp:
 
     # --------------------------------------------------- OE callbacks
     def _oe_status_changed(self, state: str):
-        colours = {
-            'RECORD':      '#f44336',
-            'ACQUIRE':     '#FF9800',
-            'IDLE':        '#4CAF50',
-            'UNREACHABLE': 'grey',
-        }
+        colours = {'RECORD': '#f44336', 'ACQUIRE': '#FF9800', 'IDLE': '#4CAF50', 'UNREACHABLE': 'grey'}
         col = colours.get(state, 'grey')
         self._oe_dot.config(fg=col)
         self._oe_label.config(text=f"Open Ephys: {state}")
 
     def _oe_record_started(self):
-        """Open Ephys just started recording — trigger capture if in TRIGGERED mode."""
         if not self.ctrl_oe_var.get():
             return
         if self.mode != CaptureMode.TRIGGERED:
             return
-        if self.state not in (AppState.ARMED, AppState.RECORDING):
-            return
-        self._trigger_start('oe')
+        if self.state == AppState.ARMED:
+            self._start_hardware_triggers()
+        elif self.state == AppState.RECORDING:
+            self._active_sources.add('oe')
 
     def _oe_record_stopped(self):
         """Open Ephys just stopped recording."""
-        pass
+        if not self.ctrl_oe_var.get():
+            return
+        if self.mode != CaptureMode.TRIGGERED:
+            return
+        self._trigger_stop('oe')
 
     # --------------------------------------------------- OR Logic trigger routing
     def _trigger_start(self, source: str):
-        """Register a source requesting recording start."""
+        if self.state == AppState.ARMED:
+            self._start_hardware_triggers()
         self._active_sources.add(source)
-        # Note: If ARMED, we wait for the first frame in cam_capture_thread 
-        # to call _transition_to_recording automatically.
 
     def _trigger_stop(self, source: str):
-        """Register a source releasing its recording request."""
         self._active_sources.discard(source)
         if self._active_sources:
-            return   # other sources still active, keep recording
+            return
         if self.state == AppState.RECORDING:
             self.sync.cmd_stop_cam_free()
             self._end_recording()
 
     def _on_arduino_event(self, event: str):
-        """Handle EVENT: strings from the Arduino SerialReaderThread."""
         if event == 'CAM_BUTTON':
             if not self.ctrl_button_var.get():
                 return
             if self.state == AppState.ARMED:
-                self._trigger_start('button')
+                self._start_hardware_triggers()
             elif self.state == AppState.RECORDING:
                 self._trigger_stop('button')
         elif event == 'BARCODE_BUTTON':
             self._toggle_barcodes()
-        else:
-            print(f"_on_arduino_event: unknown event ignored: {event!r}")
 
     def _toggle_barcodes(self):
-        """Toggle barcode pulses on/off independent of video capture."""
         if self._barcodes_running:
             self.sync.cmd_stop_barcodes()
             self._barcodes_running = False
@@ -747,9 +707,8 @@ class CameraApp:
         self._update_barcode_gui()
 
     def _update_barcode_gui(self):
-        """Update the global barcode status indicator and button."""
         if self._barcodes_running:
-            self._barcode_dot.config(fg='#4CAF50') # Green
+            self._barcode_dot.config(fg='#4CAF50')
             self._barcode_label.config(text="Barcodes: RUNNING")
             self.barcode_btn.config(text="STOP BARCODES", bg='#f44336')
         else:
@@ -758,19 +717,17 @@ class CameraApp:
             self.barcode_btn.config(text="START BARCODES", bg='#4CAF50')
 
     # --------------------------------------------------- Arduino and Matlab callbacks
-
     def _matlab_started(self):
-        """Matlab sent a UDP 'START'."""
         if not self.ctrl_matlab_var.get():
             return
         if self.mode != CaptureMode.TRIGGERED:
             return
-        if self.state not in (AppState.ARMED, AppState.RECORDING):
-            return
-        self._trigger_start('matlab')
+        if self.state == AppState.ARMED:
+            self._start_hardware_triggers()
+        elif self.state == AppState.RECORDING:
+            self._active_sources.add('matlab')
 
     def _matlab_stopped(self):
-        """Matlab sent a UDP 'STOP'."""
         if not self.ctrl_matlab_var.get():
             return
         if self.mode != CaptureMode.TRIGGERED:
@@ -779,82 +736,60 @@ class CameraApp:
 
     # --------------------------------------------------- record / stop buttons
     def _on_arm(self):
-        """ARM for triggered recording."""
         if self.state != AppState.IDLE:
             return
-
         animal = self.animal_id_var.get().strip()
         if not animal:
             messagebox.showwarning("Animal ID", "Please enter an Animal ID before recording.")
             return
-
-        # Safety check: Monitor OE enabled but OE not recording
-        if self.ctrl_oe_var.get() and self.sync.oe_state != 'RECORD':
-            if not messagebox.askyesno("Open Ephys Not Recording", 
-                                       "Open Ephys is not currently recording. Arm anyway?"):
-                return
-
-        # Lock tabs: can't switch away from record tab while armed/recording
         self._set_tabs_locked(True)
-
-        # Arm: tell Arduino to start barcodes if not already, and wait for trigger
-        # cmd_recording_active sends 'R' which starts barcodes + queues cam pulses
-        self.sync.cmd_recording_active()
         self.state = AppState.ARMED
         self._set_state_label("● ARMED — waiting for trigger...", '#FF9800')
         self.arm_btn.config(state='disabled')
         self.stop_btn.config(state='normal')
-        
-        # If OE is already recording and we are monitoring it
-        if self.ctrl_oe_var.get() and self.sync.oe_state == 'RECORD':
-            self._trigger_start('oe')
-            self._begin_recording()
+        self.start_triggers_btn.config(state='normal')
+        self._begin_recording()
+
+    def _start_hardware_triggers(self):
+        if self.state == AppState.ARMED:
+            print("Starting hardware triggers...")
+            self.sync.cmd_recording_active()
+            self.start_triggers_btn.config(state='disabled')
 
     def _on_record(self):
-        """Start FREE RECORD (no trigger)."""
         if self.state != AppState.IDLE:
             return
-
         animal = self.animal_id_var.get().strip()
         if not animal:
             messagebox.showwarning("Animal ID", "Please enter an Animal ID before recording.")
             return
-
         self._set_tabs_locked(True)
-        # Start camera TTLs immediately
         self.sync.cmd_start_cam_free()
         self._begin_recording()
 
     def _on_stop(self):
-        self._active_sources.clear()   # manual override: cancel all external requests
+        self._active_sources.clear()
         if self.state == AppState.ARMED:
-            # Revert to IDLE. Stop cam pulses if they were pending.
             self.sync.cmd_stop_cam_free()
             self.state = AppState.IDLE
             self._set_state_label("● IDLE", 'grey')
-            self._on_mode_change() # Reset button states
+            self._on_mode_change()
             self.stop_btn.config(state='disabled')
-            self._set_tabs_locked(False) # Unlock tabs
+            self._set_tabs_locked(False)
             return
-
         if self.state == AppState.RECORDING:
-            # Stop camera TTLs but leave barcodes alone
             self.sync.cmd_stop_cam_free()
             self._end_recording()
 
     def _transition_to_recording(self):
-        """Called by cam_capture_thread when the first frame is received while ARMED."""
         if self.state == AppState.ARMED:
             self.state = AppState.RECORDING
-            self._rec_start = datetime.now() # Start the timer NOW
+            self._rec_start = datetime.now()
             self._set_state_label("● RECORDING", '#f44336')
-            print("Automatic transition: First frame received, recording started.")
 
     def _set_tabs_locked(self, locked: bool):
-        """Enable/disable tab switching."""
         state = 'disabled' if locked else 'normal'
         for i in range(self.notebook.index('end')):
-            # We must not disable the *current* tab because that hides the UI
             if self.notebook.index(self.notebook.select()) == i and locked:
                 continue
             self.notebook.tab(i, state=state)
@@ -866,55 +801,31 @@ class CameraApp:
         time_str = now.strftime("_%H_%M_%S")
         folder   = Path(self.cfg['paths']['save_folder']) / animal
         folder.mkdir(parents=True, exist_ok=True)
-        filename = f"{animal}_{date_str}{time_str}.mp4"
-        return str(folder / filename)
+        return str(folder / f"{animal}_{date_str}{time_str}.mp4")
 
     def _begin_recording(self):
-        """Transition IDLE/ARMED -> RECORDING (or ARMED waiting). Creates writer and save thread."""
         animal   = self.animal_id_var.get().strip()
         fps      = int(self.fps_var.get())
         filepath = self._make_filepath(animal)
-
         self._filepath    = filepath
-        # self._rec_start is set in _transition_to_recording (triggered by first frame)
         self._metadata    = make_metadata_stub(self.cfg, animal, self.mode, fps, filepath)
-        write_metadata(filepath, self._metadata)   # crash-safe stub written NOW
-
-        # Stop current preview-only capture, reconfigure camera, restart with writer
+        write_metadata(filepath, self._metadata)
         self._stop_capture_thread()
         triggered = (self.mode == CaptureMode.TRIGGERED)
-        # Enable Line 1 output (exposures) during recording
         init_cam(self._cam, self.cfg, fps, triggered, enable_output=True)
-
-        # Build write queue and writer
         self._write_queue = queue.Queue()
         self._reset_frame_stats()
         self._stop_event.clear()
         self._ready_event.clear()
-
         self._writer = make_writer(filepath, self.cfg, fps)
-
-        # Start save thread
         save_stop = threading.Event()
         self._save_stop_event = save_stop
-        self._save_thread = threading.Thread(
-            target=save_thread_func,
-            args=(self._write_queue, self._writer, self._frame_stats, save_stop),
-            daemon=True, name="SaveThread"
-        )
+        self._save_thread = threading.Thread(target=save_thread_func, args=(self._write_queue, self._writer, self._frame_stats, save_stop), daemon=True)
         self._save_thread.start()
-
-        # Start capture thread (now writes to write_queue)
         self._cam.BeginAcquisition()
-        self._capture_thread = threading.Thread(
-            target=cam_capture_thread,
-            args=(self._cam, self._write_queue, self._preview_queue,
-                  self._frame_stats, self._stop_event, self._ready_event, self.cfg, self),
-            daemon=True, name="CamCaptureThread"
-        )
+        self._capture_thread = threading.Thread(target=cam_capture_thread, args=(self._cam, self._write_queue, self._preview_queue, self._frame_stats, self._stop_event, self._ready_event, self.cfg, self), daemon=True)
         self._capture_thread.start()
         self._ready_event.wait(timeout=3.0)
-
         self.arm_btn.config(state='disabled')
         self.record_btn.config(state='disabled')
         self.stop_btn.config(state='normal')
@@ -922,258 +833,123 @@ class CameraApp:
         self._file_label.config(text=f"File: {Path(filepath).name}", fg='black')
 
     def _end_recording(self):
-        """Transition RECORDING -> FINISHING -> IDLE."""
         self.state = AppState.FINISHING
         self._set_state_label("● FINISHING — writing to disk...", '#FF9800')
         self.stop_btn.config(state='disabled')
-
-        # Run shutdown in background so GUI stays responsive
-        threading.Thread(target=self._finish_worker, daemon=True,
-                         name="FinishThread").start()
+        threading.Thread(target=self._finish_worker, daemon=True).start()
 
     def _finish_worker(self):
-        """Background: drain queues, close writer, write final metadata."""
-        # Signal capture thread to stop AND ensure EndAcquisition is called
         self._stop_capture_thread()
-
-        # Signal save thread - send None sentinel after queue is drained
         if self._write_queue:
             self._write_queue.put(None)
         if self._save_thread:
             self._save_thread.join(timeout=60.0)
-
-        # Close writer
         if self._writer:
-            try:
-                self._writer.close()
-            except Exception:
-                pass
+            try: self._writer.close()
+            except: pass
             self._writer = None
-
-        # Finalise metadata
         end_time = datetime.now()
-        meta = finalise_metadata(
-            self._metadata, end_time,
-            self._frame_stats.get('captured', 0),
-            self._frame_stats.get('dropped',  0),
-            self._frame_stats.get('saved',    0),
-        )
+        meta = finalise_metadata(self._metadata, end_time, self._frame_stats.get('captured', 0), self._frame_stats.get('dropped', 0), self._frame_stats.get('saved', 0))
         write_metadata(self._filepath, meta)
-
-        # Tell Open Ephys to stop recording if checkbox is checked
         if self.oe_stop_var.get():
-            print("_finish_worker: waiting 1s before stopping Open Ephys...")
             time.sleep(1.0)
             self.sync.cmd_stop_oe_recording()
-
-        # Restart preview-only capture
-        print("_finish_worker: restarting preview capture...")
         self._start_preview_capture()
-        print("_finish_worker: preview restarted OK")
-
-        # Back to GUI thread
         self.root.after(0, self._recording_finished)
 
     def _recording_finished(self):
-        self._active_sources.clear()      # Clear stale sources when recording ends
-        # Barcode state is now independent - no reset here
+        self._active_sources.clear()
         self.state = AppState.IDLE
         self._set_state_label("● IDLE", 'grey')
-        self._on_mode_change() # Reset button states based on mode
+        self._on_mode_change()
         self.stop_btn.config(state='disabled')
         self.animal_entry.config(state='normal')
-        self._update_barcode_gui() # Refresh global indicator
-        self._set_tabs_locked(False) # Unlock tabs
-        saved = self._frame_stats.get('saved', 0)
-        dropped = self._frame_stats.get('dropped', 0)
-        self._file_label.config(
-            text=f"Saved: {Path(self._filepath).name}  ({saved} frames, {dropped} dropped)",
-            fg='#4CAF50' if dropped == 0 else '#FF9800'
-        )
+        self._update_barcode_gui()
+        self._set_tabs_locked(False)
+        saved, dropped = self._frame_stats.get('saved', 0), self._frame_stats.get('dropped', 0)
+        self._file_label.config(text=f"Saved: {Path(self._filepath).name} ({saved} frames, {dropped} dropped)", fg='#4CAF50' if dropped == 0 else '#FF9800')
 
     # --------------------------------------------------- preview loop
     def _update_preview(self):
-        """Called every PREVIEW_INTERVAL_MS on main thread. Updates canvases + stats."""
         try:
             frame = self._preview_queue.get_nowait()
-            
-            # Update Preview Tab Canvas (always show live if on that tab)
             tab_idx = self.notebook.index(self.notebook.select())
             if tab_idx == 0:
-                img   = Image.fromarray(frame)
-                photo = ImageTk.PhotoImage(img)
-                if self._preview_image_id is None:
-                    self._preview_image_id = self.canvas.create_image(0, 0, anchor='nw', image=photo)
-                else:
-                    self.canvas.itemconfig(self._preview_image_id, image=photo)
-                self.canvas._photo = photo # keep reference
-
-            # Update Record Tab Canvas (ONLY show if RECORDING)
+                img, photo = Image.fromarray(frame), ImageTk.PhotoImage(Image.fromarray(frame))
+                if self._preview_image_id is None: self._preview_image_id = self.canvas.create_image(0, 0, anchor='nw', image=photo)
+                else: self.canvas.itemconfig(self._preview_image_id, image=photo)
+                self.canvas._photo = photo
             elif tab_idx == 1 and self.state == AppState.RECORDING:
-                img   = Image.fromarray(frame)
-                photo = ImageTk.PhotoImage(img)
-                if self._record_preview_image_id is None:
-                    self._record_preview_image_id = self.record_canvas.create_image(0, 0, anchor='nw', image=photo)
-                else:
-                    self.record_canvas.itemconfig(self._record_preview_image_id, image=photo)
-                self.record_canvas._photo = photo # keep reference
-            
+                img, photo = Image.fromarray(frame), ImageTk.PhotoImage(Image.fromarray(frame))
+                if self._record_preview_image_id is None: self._record_preview_image_id = self.record_canvas.create_image(0, 0, anchor='nw', image=photo)
+                else: self.record_canvas.itemconfig(self._record_preview_image_id, image=photo)
+                self.record_canvas._photo = photo
             elif tab_idx == 1 and self.state != AppState.RECORDING:
-                # Clear the record canvas if not recording
-                if self._record_preview_image_id is not None:
-                    self.record_canvas.delete(self._record_preview_image_id)
-                    self._record_preview_image_id = None
-
-        except queue.Empty:
-            pass
-
-        # Update stats - ONLY count captured frames if RECORDING
+                if self._record_preview_image_id is not None: self.record_canvas.delete(self._record_preview_image_id); self._record_preview_image_id = None
+        except queue.Empty: pass
         if self.state == AppState.RECORDING:
-            captured = self._frame_stats.get('captured', 0)
-            elapsed = (datetime.now() - self._rec_start).total_seconds()
-            self._stat_frame_lbl.config(text=f"Frame:   {captured:,}")
-            self._stat_elapsed_lbl.config(text=f"Elapsed: {elapsed:.1f} s")
-        else:
-            self._stat_frame_lbl.config(text="Frame:   0")
-            self._stat_elapsed_lbl.config(text="Elapsed: --")
-
-        dropped  = self._frame_stats.get('dropped',  0)
-        qsize    = self._write_queue.qsize() if self._write_queue else 0
-
-        self._stat_dropped_lbl.config(
-            text=f"Dropped: {dropped}",
-            fg='#f44336' if dropped > 0 else 'black'
-        )
+            captured, elapsed = self._frame_stats.get('captured', 0), (datetime.now() - self._rec_start).total_seconds()
+            self._stat_frame_lbl.config(text=f"Frame:   {captured:,}"); self._stat_elapsed_lbl.config(text=f"Elapsed: {elapsed:.1f} s")
+        else: self._stat_frame_lbl.config(text="Frame:   0"); self._stat_elapsed_lbl.config(text="Elapsed: --")
+        dropped, qsize = self._frame_stats.get('dropped', 0), (self._write_queue.qsize() if self._write_queue else 0)
+        self._stat_dropped_lbl.config(text=f"Dropped: {dropped}", fg='#f44336' if dropped > 0 else 'black')
         self._stat_queue_lbl.config(text=f"Write queue: {qsize}")
-
         self.root.after(self.PREVIEW_INTERVAL_MS, self._update_preview)
 
-    # --------------------------------------------------- helpers
     def _reset_frame_stats(self):
-        self._frame_stats = {
-            'captured':     0,
-            'dropped':      0,
-            'saved':        0,
-            'timeouts':     0,
-            'capture_done': False,
-            'error':        None,
-        }
+        self._frame_stats = {'captured': 0, 'dropped': 0, 'saved': 0, 'timeouts': 0, 'capture_done': False, 'error': None}
 
     def _set_state_label(self, text: str, colour: str):
         self._state_label.config(text=text, fg=colour)
 
-    # --------------------------------------------------- shutdown
     def _on_close(self):
         if self.state in (AppState.RECORDING, AppState.FINISHING):
-            if not messagebox.askyesno(
-                "Recording in progress",
-                "A recording is in progress. Stop and exit?"
-            ):
-                return
-            if self.state == AppState.RECORDING:
-                self._on_stop()
-                # Give finish worker a moment before hard exit
-                self.root.after(2000, self._cleanup_and_destroy)
-                return
+            if not messagebox.askyesno("Recording in progress", "Stop and exit?"): return
+            if self.state == AppState.RECORDING: self._on_stop(); self.root.after(2000, self._cleanup_and_destroy); return
         self._cleanup_and_destroy()
 
     def _cleanup_and_destroy(self):
-        self._cleanup()
-        self.root.destroy()
+        self._cleanup(); self.root.destroy()
 
     def _cleanup(self):
-        """Safe shutdown - always drives Arduino pins low and releases camera."""
         print("_cleanup: starting...")
-        try:
-            self.sync.stop_polling()
-            self.sync.stop_udp_listener()
-            self.sync.disconnect_arduino()
-            print("_cleanup: sync stopped")
-        except Exception as e:
-            print(f"_cleanup: sync error ({e})")
-
-        # Stop any running writer
+        try: self.sync.stop_polling(); self.sync.stop_udp_listener(); self.sync.disconnect_arduino()
+        except: pass
         if self._writer:
-            try:
-                self._writer.close()
-                print("_cleanup: writer closed")
-            except Exception as e:
-                print(f"_cleanup: writer close error ({e})")
+            try: self._writer.close()
+            except: pass
             self._writer = None
-
-        # Stop capture thread
         self._stop_event.set()
         try:
-            if self._capture_thread and self._capture_thread.is_alive():
-                self._capture_thread.join(timeout=3.0)
-            print("_cleanup: capture thread stopped")
-        except Exception as e:
-            print(f"_cleanup: capture thread error ({e})")
-
-        # Release camera - order matters: EndAcquisition -> DeInit -> Clear -> Release
+            if self._capture_thread and self._capture_thread.is_alive(): self._capture_thread.join(timeout=3.0)
+        except: pass
         try:
             if self._cam:
-                try:
-                    self._cam.EndAcquisition()
-                    print("_cleanup: EndAcquisition OK")
-                except PySpin.SpinnakerException:
-                    print("_cleanup: EndAcquisition skipped (not acquiring)")
-                try:
-                    self._cam.DeInit()
-                    print("_cleanup: DeInit OK")
-                except Exception as e:
-                    print(f"_cleanup: DeInit error ({e})")
-                del self._cam
-                self._cam = None
-            if self._cam_list:
-                self._cam_list.Clear()
-                print("_cleanup: cam_list cleared")
-            if self._spin_system:
-                self._spin_system.ReleaseInstance()
-                print("_cleanup: system released")
-        except Exception as e:
-            print(f"_cleanup: camera teardown error ({e})")
+                try: self._cam.EndAcquisition()
+                except: pass
+                try: self._cam.DeInit()
+                except: pass
+                del self._cam; self._cam = None
+            if self._cam_list: self._cam_list.Clear()
+            if self._spin_system: self._spin_system.ReleaseInstance()
+        except: pass
         print("_cleanup: done")
 
-
-# ================================================================= entry point
 def main():
-    print("main() starting...")
-    print("Loading config...")
-    cfg  = load_config()
-    print("Config loaded OK")
-    print("Creating tkinter root...")
+    cfg = load_config()
     root = tk.Tk()
-    print("tkinter root created OK")
-
-    # Top-level exception handler - shows dialog AND logs instead of silent crash
     def handle_exception(exc_type, exc_value, exc_tb):
         msg = ''.join(traceback.format_exception(exc_type, exc_value, exc_tb))
-        print(f"UNHANDLED EXCEPTION:\n{msg}")
-        _log_file.flush()
-        messagebox.showerror("Unexpected Error", msg)
-        try:
-            root.destroy()
-        except Exception:
-            pass
+        print(f"UNHANDLED EXCEPTION:\n{msg}"); _log_file.flush(); messagebox.showerror("Unexpected Error", msg)
+        try: root.destroy()
+        except: pass
     sys.excepthook = handle_exception
-
     try:
-        print("Creating CameraApp...")
-        app = CameraApp(root, cfg)
-        print("CameraApp created OK - entering mainloop")
-        _log_file.flush()
-        root.mainloop()
-        print("mainloop exited cleanly")
-    except Exception as e:
-        msg = traceback.format_exc()
-        print(f"CRASH during startup or mainloop:\n{msg}")
-        _log_file.flush()
-        try:
-            messagebox.showerror("Startup Error", msg)
-        except Exception:
-            pass
-
+        app = CameraApp(root, cfg); _log_file.flush(); root.mainloop()
+    except Exception:
+        msg = traceback.format_exc(); print(f"CRASH:\n{msg}"); _log_file.flush()
+        try: messagebox.showerror("Startup Error", msg)
+        except: pass
 
 if __name__ == '__main__':
     main()
