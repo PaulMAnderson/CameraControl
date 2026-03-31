@@ -271,19 +271,24 @@ class SyncController:
 
     # -------------------------------------------------- Open Ephys polling
     def start_polling(self, on_record_start=None, on_record_stop=None,
-                      on_status_change=None):
+                      on_status_change=None, on_recording_name_change=None):
         """
         Start background thread polling Open Ephys HTTP API.
         Callbacks:
           on_record_start()        - OE just entered RECORD state
           on_record_stop()         - OE just left RECORD state
           on_status_change(state)  - any state change, state is a string
+          on_recording_name_change(name) - called when OE recording base name changes
         """
         self._on_record_start  = on_record_start
         self._on_record_stop   = on_record_stop
         self._on_status_change = on_status_change
+        self._on_recording_name_change = on_recording_name_change
+        
         self._oe_stop.clear()
         self._oe_state = None
+        self._oe_recording_name = None
+        
         self._oe_thread = threading.Thread(
             target=self._poll_loop, daemon=True, name="OEPollThread"
         )
@@ -320,10 +325,13 @@ class SyncController:
         host     = self._cfg['hardware']['open_ephys_host']
         port     = self._cfg['hardware']['open_ephys_port']
         interval = self._cfg['hardware']['open_ephys_poll_interval_ms'] / 1000.0
-        url      = f"http://{host}:{port}/api/status"
+        
+        status_url = f"http://{host}:{port}/api/status"
+        rec_url    = f"http://{host}:{port}/api/recording"
 
         while not self._oe_stop.is_set():
-            new_state = self._fetch_oe_state(url)
+            # 1. Check Status (Mode)
+            new_state = self._fetch_oe_state(status_url)
             if new_state != self._oe_state:
                 prev = self._oe_state
                 self._oe_state = new_state
@@ -332,16 +340,31 @@ class SyncController:
                     self._fire(self._on_record_start)
                 elif prev == 'RECORD' and new_state != 'RECORD':
                     self._fire(self._on_record_stop)
+            
+            # 2. Check Recording Name (for Animal ID extraction)
+            new_rec_info = self._fetch_oe_json(rec_url)
+            if new_rec_info:
+                base_name = new_rec_info.get('base_name')
+                if base_name and base_name != self._oe_recording_name:
+                    self._oe_recording_name = base_name
+                    self._fire(self._on_recording_name_change, base_name)
+
             self._oe_stop.wait(interval)
 
     def _fetch_oe_state(self, url: str) -> str:
         """Return OE mode string or 'UNREACHABLE' on any error."""
+        data = self._fetch_oe_json(url)
+        return data.get('mode', 'UNKNOWN').upper() if data else 'UNREACHABLE'
+
+    def _fetch_oe_json(self, url: str) -> dict:
+        """Helper to fetch and parse JSON from OE API."""
+        if not _HAS_URLLIB:
+            return None
         try:
             with urllib.request.urlopen(url, timeout=1.0) as resp:
-                data = _json.loads(resp.read().decode())
-                return data.get('mode', 'UNKNOWN').upper()
+                return _json.loads(resp.read().decode())
         except Exception:
-            return 'UNREACHABLE'
+            return None
 
     @property
     def oe_state(self) -> str:

@@ -396,6 +396,7 @@ class CameraApp:
             on_record_start=self._oe_record_started,
             on_record_stop=self._oe_record_stopped,
             on_status_change=self._oe_status_changed,
+            on_recording_name_change=self._oe_recording_name_changed,
         )
         self.sync.start_udp_listener(
             on_matlab_start=self._matlab_started,
@@ -744,6 +745,21 @@ class CameraApp:
         if self.mode != CaptureMode.TRIGGERED:
             return
         self._trigger_stop('oe')
+
+    def _oe_recording_name_changed(self, base_name: str):
+        """OE recording name updated. Extract Animal ID (first word)."""
+        if not base_name:
+            return
+        
+        # Format: "ANIMALID YYYY-MM-DD_HH-MM-SS Protocol Config"
+        animal_id = base_name.split(' ')[0]
+        
+        # Only auto-fill if we are IDLE (don't overwrite while armed/recording)
+        if self.state == AppState.IDLE:
+            current = self.animal_id_var.get().strip()
+            if animal_id != current:
+                print(f"Auto-filling Animal ID from OE: {animal_id}")
+                self.animal_id_var.set(animal_id)
 
     # --------------------------------------------------- OR Logic trigger routing
     def _trigger_start(self, source: str):
