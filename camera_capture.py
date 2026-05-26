@@ -219,6 +219,7 @@ def init_cam(cam, cfg: dict, fps: int, triggered: bool, enable_output: bool = Tr
     if triggered:
         cam.TriggerMode.SetValue(PySpin.TriggerMode_On)
         cam.TriggerSource.SetValue(PySpin.TriggerSource_Line0)
+        cam.TriggerOverlap.SetValue(PySpin.TriggerOverlap_ReadOut)
     else:
         cam.TriggerMode.SetValue(PySpin.TriggerMode_Off)
 
