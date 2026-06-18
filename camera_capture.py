@@ -340,12 +340,15 @@ def cam_capture_thread(cam, write_queue, preview_queue, frame_stats,
 
 
 # ================================================================ save thread
-def save_thread_func(write_queue, writer, frame_stats, stop_event):
+def save_thread_func(write_queue, writer, frame_stats, stop_event, emergency_frames=5000):
     """
     Runs in its own thread. Drains write_queue into ffmpeg writer.
     Exits when it receives None sentinel.
+    Sets frame_stats['queue_emergency'] if queue depth exceeds emergency_frames,
+    signalling the GUI loop to trigger an emergency stop before OOM.
     """
     saved = 0
+    emergency_flagged = False
     try:
         while True:
             try:
@@ -360,6 +363,10 @@ def save_thread_func(write_queue, writer, frame_stats, stop_event):
             writer.writeFrame(item)
             write_queue.task_done()
             saved += 1
+            if not emergency_flagged and write_queue.qsize() > emergency_frames:
+                print(f"EMERGENCY: write queue exceeded {emergency_frames} frames — triggering auto-stop")
+                frame_stats['queue_emergency'] = True
+                emergency_flagged = True
     finally:
         frame_stats['saved'] = saved
 
@@ -753,10 +760,15 @@ class CameraApp:
             return
         if self.mode != CaptureMode.TRIGGERED:
             return
-        # If we are ARMED or already recorded (due to ghost frames), START hardware!
-        if not self._hardware_triggers_started:
-            self._start_hardware_triggers()
         self._active_sources.add('oe')
+        if not self._hardware_triggers_started:
+            delay_ms = self.cfg.get('hardware', {}).get('oe_trigger_delay_ms', 1500)
+            self.root.after(delay_ms, self._oe_delayed_trigger_start)
+
+    def _oe_delayed_trigger_start(self):
+        """Start hardware triggers after the OE delay — only if OE is still active."""
+        if 'oe' in self._active_sources and not self._hardware_triggers_started:
+            self._start_hardware_triggers()
 
     def _oe_record_stopped(self):
         """Open Ephys just stopped recording."""
@@ -892,9 +904,10 @@ class CameraApp:
             self._writer = make_writer(filepath, self.cfg, fps)
             
             # Start save thread
+            emergency_frames = self.cfg.get('encoding', {}).get('queue_emergency_frames', 5000)
             self._save_thread = threading.Thread(
-                target=save_thread_func, 
-                args=(self._write_queue, self._writer, self._frame_stats, threading.Event()), 
+                target=save_thread_func,
+                args=(self._write_queue, self._writer, self._frame_stats, threading.Event(), emergency_frames),
                 daemon=True
             )
             self._save_thread.start()
@@ -1081,7 +1094,22 @@ class CameraApp:
         else: self._stat_frame_lbl.config(text="Frame:   0"); self._stat_elapsed_lbl.config(text="Elapsed: --")
         dropped, qsize = self._frame_stats.get('dropped', 0), (self._write_queue.qsize() if self._write_queue else 0)
         self._stat_dropped_lbl.config(text=f"Dropped: {dropped}", fg='#f44336' if dropped > 0 else 'black')
-        self._stat_queue_lbl.config(text=f"Write queue: {qsize}")
+        emergency_frames = self.cfg.get('encoding', {}).get('queue_emergency_frames', 5000)
+        if qsize > emergency_frames:
+            q_colour = '#f44336'
+        elif qsize > emergency_frames // 2:
+            q_colour = '#FF9800'
+        else:
+            q_colour = 'black'
+        self._stat_queue_lbl.config(text=f"Write queue: {qsize}", fg=q_colour)
+        if self._frame_stats.get('queue_emergency') and self.state == AppState.RECORDING:
+            self._frame_stats['queue_emergency'] = False
+            messagebox.showwarning("Write Queue Overflow",
+                f"Write queue exceeded {emergency_frames} frames. The encoder cannot keep up.\n"
+                "Recording will be stopped to prevent a crash.\n\n"
+                "Consider: reducing encoding preset quality, switching from VNC to RDP, "
+                "or using a separate NIC for the camera.")
+            self._on_stop()
         self.root.after(self.PREVIEW_INTERVAL_MS, self._update_preview)
 
     def _reset_frame_stats(self):

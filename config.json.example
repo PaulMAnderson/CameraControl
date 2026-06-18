@@ -16,7 +16,9 @@
         "open_ephys_host":   "localhost",
         "open_ephys_port":   37497,
         "open_ephys_poll_interval_ms": 500,
-        "matlab_udp_port":   5005
+        "matlab_udp_port":   5005,
+        "_comment_oe_delay": "Delay in ms between OE recording detected and camera triggers starting.",
+        "oe_trigger_delay_ms": 1500
     },
 
     "camera": {
@@ -25,7 +27,8 @@
         "gamma":         0.5,
         "width":         720,
         "height":        540,
-        "buffer_count":  200,
+        "_comment_buffer": "buffer_count covers encoder stalls. 2400 = 6s at 400fps.",
+        "buffer_count":  2400,
         "buffer_mode":   "OldestFirst",
         "triggered_fps": 400,
         "cam_timeout_ms": 3000
@@ -35,7 +38,10 @@
         "_comment_codec": "hevc_qsv=Intel, hevc_nvenc=Nvidia, hevc_amf=AMD, libx265=CPU fallback",
         "codec":      "hevc_qsv",
         "codec_tag":  "hvc1",
-        "preset":     "fast",
+        "_comment_preset": "Use veryfast/fastest to reduce GPU load. Larger file but avoids encoder stalls under VNC load.",
+        "preset":     "veryfast",
+        "_comment_emergency": "Auto-stop if write queue exceeds this many frames. 80000 = ~31GB at 720x540 mono.",
+        "queue_emergency_frames": 80000,
         "extra_output_flags": {}
     },
 
