@@ -17,6 +17,7 @@ import os
 os.environ['FOR_DISABLE_CONSOLE_CTRL_HANDLER'] = '1'   # prevent ctrl-c crash on Windows
 
 import sys
+import re
 import json
 import time
 import queue
@@ -110,9 +111,28 @@ def load_config() -> dict:
 
 
 # ============================================================= metadata helpers
+def rig_token(cfg: dict) -> str:
+    """Room name with whitespace and hyphens removed, e.g. 'Juxta 2' -> 'Juxta2'.
+
+    Mirrors EPHYS.Videos.getRoomRigEdition() so filenames written here need no
+    renaming by the pipeline. Falls back to rig_id when room is unset.
+    """
+    room = str(cfg['rig'].get('room') or '').strip()
+    if not room:
+        room = str(cfg['rig'].get('rig_id') or 'Rig')
+    return re.sub(r'[\s-]+', '', room)
+
+
 def make_metadata_stub(cfg: dict, animal_id: str, mode: CaptureMode,
                        fps: int, filepath: str) -> dict:
-    """Initial metadata written at recording START. Status = 'recording'."""
+    """Initial metadata written at recording START. Status = 'recording'.
+
+    Fields whose values are not yet known are OMITTED, never written as null —
+    see VIDEO_METADATA_SPECIFICATION.md rule 0. Consumers test presence to decide
+    whether a value is usable; a null passes that test (it reaches MATLAB as [])
+    and then breaks downstream. end_time, duration_sec and the frame counts are
+    added by finalise_metadata(); sync.* is written by the EPHYS pipeline.
+    """
     now = datetime.now()
     return {
         "status": "recording",
@@ -121,11 +141,6 @@ def make_metadata_stub(cfg: dict, animal_id: str, mode: CaptureMode,
             "mode":            mode.value,
             "fps":             fps,
             "start_time":      now.isoformat(),
-            "end_time":        None,
-            "duration_sec":    None,
-            "frames_captured": None,
-            "frames_dropped":  None,
-            "frames_saved":    None,
         },
         "rig": {
             "room":           cfg['rig']['room'],
@@ -134,6 +149,7 @@ def make_metadata_stub(cfg: dict, animal_id: str, mode: CaptureMode,
         },
         "video": {
             "filename":     Path(filepath).name,
+            "filepath":     str(filepath),
             "camera_label": cfg['camera'].get('label', 'Cam1'),
             "camera_id":    cfg['camera'].get('camera_id', 'Unknown'),
             "resolution":   [cfg['camera']['width'], cfg['camera']['height']],
@@ -144,28 +160,36 @@ def make_metadata_stub(cfg: dict, animal_id: str, mode: CaptureMode,
         "processing": {
             "is_fixed": False,
             "is_split": False,
-            "source_file": None,
             "history": []
         },
-        "sync": {
-            "status": None,
-            "drift_ms": None,
-            "start_sample": None,
-            "end_sample": None
-        }
+        "sync": {}
     }
 
 
 def finalise_metadata(stub: dict, end_time: datetime, frames_captured: int,
-                       frames_dropped: int, frames_saved: int) -> dict:
-    """Fill in end-of-recording fields and mark status complete."""
+                       frames_dropped: int, frames_saved: int,
+                       status: str = 'complete') -> dict:
+    """Fill in end-of-recording fields and mark the recording finished.
+
+    `status` is 'complete' on a clean stop and 'interrupted' when finalising
+    after an abnormal exit — either way the frame counts are written, which is
+    what the EPHYS pipeline needs. video.frames_saved is written as well as
+    recording.frames_saved because the pipeline reads the video block first
+    (VIDEO_METADATA_SPECIFICATION.md section 5).
+    """
     start = datetime.fromisoformat(stub['recording']['start_time'])
-    stub['status'] = 'complete'
-    stub['recording']['end_time']       = end_time.isoformat()
-    stub['recording']['duration_sec']   = round((end_time - start).total_seconds(), 3)
+    duration = round((end_time - start).total_seconds(), 3)
+
+    stub['status'] = status
+    stub['recording']['end_time']        = end_time.isoformat()
+    stub['recording']['duration_sec']    = duration
     stub['recording']['frames_captured'] = frames_captured
     stub['recording']['frames_dropped']  = frames_dropped
     stub['recording']['frames_saved']    = frames_saved
+
+    stub.setdefault('video', {})
+    stub['video']['frames_saved'] = frames_saved
+    stub['video']['duration_sec'] = duration
     return stub
 
 
@@ -1011,17 +1035,22 @@ class CameraApp:
 
     # --------------------------------------------------- recording lifecycle
     def _make_filepath(self, animal: str) -> str:
-        """New pattern: {Animal} {Date}_{Time} {RigID}-v{Version}_{CameraLabel}.mp4"""
+        """Pattern: {Animal} {Date}_{Time} {Room}-v{Version}_{CameraLabel}.mp4
+
+        See VIDEO_METADATA_SPECIFICATION.md section 1. The EPHYS pipeline builds
+        the same token in Videos.getRoomRigEdition() and skips files already
+        correctly named, so emitting the final name here avoids a rename.
+        """
         now      = datetime.now()
         date_str = now.strftime("%Y-%m-%d")
         time_str = now.strftime("%H-%M-%S")
-        
-        rig_id   = self.cfg['rig'].get('rig_id', 'Rig')
+
         version  = self.cfg['rig'].get('version', 1)
         cam_lbl  = self.cfg['camera'].get('label', 'Cam1')
-        
-        filename = f"{animal} {date_str}_{time_str} {rig_id}-v{version}_{cam_lbl}.mp4"
-        
+        rig_tok  = rig_token(self.cfg)
+
+        filename = f"{animal} {date_str}_{time_str} {rig_tok}-v{version}_{cam_lbl}.mp4"
+
         folder   = Path(self.cfg['paths']['save_folder']) / animal
         folder.mkdir(parents=True, exist_ok=True)
         return str(folder / filename)
@@ -1112,6 +1141,37 @@ class CameraApp:
             self._on_stop()
         self.root.after(self.PREVIEW_INTERVAL_MS, self._update_preview)
 
+    def _finalise_interrupted_metadata(self):
+        """Close out a sidecar left open by an abnormal exit.
+
+        Runs from _cleanup(), which is atexit-registered, so a recording ended by
+        anything other than the Stop button still gets its frame counts written.
+        Without this the sidecar keeps status 'recording' with no counts forever,
+        and the EPHYS pipeline cannot resolve the video's frame count from it.
+
+        Deliberately NOT a periodic flush during recording: a provisional count
+        written mid-recording would be indistinguishable from a final one, and
+        the pipeline would trust an undercount. Better to write once, at the end,
+        and let the pipeline's ffprobe fallback handle a hard kill that never
+        reaches this code at all.
+        """
+        try:
+            meta = self._metadata
+            if not meta or not self._filepath:
+                return
+            if meta.get('status') != 'recording':
+                return  # already finalised by _finish_worker
+            meta = finalise_metadata(
+                meta, datetime.now(),
+                self._frame_stats.get('captured', 0),
+                self._frame_stats.get('dropped', 0),
+                self._frame_stats.get('saved', 0),
+                status='interrupted')
+            write_metadata(self._filepath, meta)
+            print(f"_cleanup: finalised interrupted metadata for {Path(self._filepath).name}")
+        except Exception as exc:
+            print(f"_cleanup: could not finalise metadata: {exc}")
+
     def _reset_frame_stats(self):
         self._frame_stats = {'captured': 0, 'dropped': 0, 'saved': 0, 'timeouts': 0, 'capture_done': False, 'error': None}
 
@@ -1135,6 +1195,7 @@ class CameraApp:
             try: self._writer.close()
             except: pass
             self._writer = None
+        self._finalise_interrupted_metadata()
         self._stop_event.set()
         try:
             if self._capture_thread and self._capture_thread.is_alive(): self._capture_thread.join(timeout=3.0)
